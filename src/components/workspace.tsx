@@ -3,13 +3,11 @@ import { useCallback, useEffect, useState } from "react";
 import {
   Activity,
   ArrowDown,
-  ArrowRight,
   ArrowUpRight,
   Bot,
   Boxes,
   Check,
   ChevronRight,
-  CircleHelp,
   Clock3,
   Database,
   ExternalLink,
@@ -272,7 +270,7 @@ export function Workspace() {
           <div className="topbar-right">
             <span className="live-label">
               <i />
-              {data?.demo ? "DEMO WORKSPACE" : "RESEARCH WORKSPACE"}
+              RESEARCH WORKSPACE
             </span>
             <span className="topbar-divider" />
             <span className="avatar small">炽</span>
@@ -335,20 +333,8 @@ export function Workspace() {
           )}
           {data && (
             <>
-              {data.demo && (
-                <div className="demo-banner">
-                  <CircleHelp size={15} />
-                  <span>
-                    当前为演示数据，用于预览内容框架与交互；不代表最新新闻或事实。配置
-                    API Key 并运行研究后显示真实情报。
-                  </span>
-                  <button onClick={() => navigate("agents")}>
-                    配置智能体 <ArrowRight size={14} />
-                  </button>
-                </div>
-              )}
               {!data.editable && (
-                <div className="demo-banner">
+                <div className="readonly-banner">
                   当前入口为只读。配置与运行操作需通过企业可信入口访问。
                 </div>
               )}
@@ -454,7 +440,6 @@ export function Workspace() {
                           <div className="highlight-bottom">
                             <span>{item.company}</span>
                             <span>{item.topic}</span>
-                            {item.demo && <small>演示</small>}
                           </div>
                         </button>
                       ))}
@@ -585,9 +570,7 @@ export function Workspace() {
                                 <span className="tag">{item.topic}</span>
                                 <span>
                                   <ShieldCheck size={12} />
-                                  {item.demo
-                                    ? "演示内容"
-                                    : `${item.evidence.length} 条原文证据`}
+                                  {`${item.evidence.length} 条原文证据`}
                                 </span>
                                 <ArrowUpRight size={15} />
                               </div>
@@ -649,7 +632,7 @@ export function Workspace() {
                               <div>
                                 <strong>{p.name}</strong>
                                 <small>
-                                  {p.demo ? "示例研究框架" : "已核验原文引用"}
+                                  已核验原文引用
                                 </small>
                               </div>
                               <ArrowUpRight size={16} />
@@ -712,9 +695,7 @@ export function Workspace() {
                 </span>
                 <span>
                   <Database size={12} />
-                  {data.storage === "preview"
-                    ? "只读演示 · 尚未连接数据库"
-                    : data.storage === "local"
+                  {data.storage === "local"
                       ? "本地工作区"
                       : "Supabase 已连接"}{" "}
                   · 所有时间为北京时间

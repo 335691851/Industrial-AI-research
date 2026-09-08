@@ -2,7 +2,7 @@ import { createClient } from "@supabase/supabase-js";
 import { mkdir, readFile, writeFile, rename, rmdir } from "node:fs/promises";
 import path from "node:path";
 import { Database, Dashboard, recentNews } from "@/lib/domain";
-import { demoDatabase, emptyDatabase } from "@/lib/seed";
+import { emptyDatabase } from "@/lib/seed";
 
 const dataFolder = () => path.join(process.cwd(), ".data");
 export function isCloud() {
@@ -59,7 +59,7 @@ export async function readDatabase(): Promise<Database> {
     );
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return demoDatabase();
+    return emptyDatabase();
   }
 }
 // CAS provides a transaction boundary for runs, credentials and fused publications.
@@ -114,23 +114,6 @@ export async function mutateDatabase<T>(
   }
 }
 export async function dashboard(editable = false): Promise<Dashboard> {
-  if (
-    process.env.VERCEL &&
-    !process.env.SUPABASE_URL &&
-    !process.env.SUPABASE_SERVICE_ROLE_KEY
-  ) {
-    const preview = demoDatabase();
-    return {
-      items: preview.items,
-      profiles: preview.profiles,
-      runs: [],
-      settings: preview.settings,
-      configured: {},
-      storage: "preview",
-      demo: true,
-      editable: false,
-    };
-  }
   let db = await readDatabase();
   if (
     db.runs.some(
@@ -151,17 +134,14 @@ export async function dashboard(editable = false): Promise<Dashboard> {
     });
     db = await readDatabase();
   }
-  const real =
-    db.items.some((i) => !i.demo) || db.profiles.some((p) => !p.demo);
   return {
     settings: db.settings,
     configured: Object.fromEntries(
       Object.entries(db.credentials).map(([k, v]) => [k, Boolean(v)]),
     ),
-    items: db.items.filter((i) => (!real || !i.demo) && recentNews(i)),
-    profiles: db.profiles.filter((p) => !real || !p.demo),
+    items: db.items.filter((i) => recentNews(i)),
+    profiles: db.profiles,
     runs: db.runs.slice(-40).reverse(),
-    demo: !real && db.items.some((i) => i.demo),
     storage: isCloud() ? "supabase" : "local",
     editable,
   };

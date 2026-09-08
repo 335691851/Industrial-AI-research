@@ -430,7 +430,7 @@ h1 {
   border-color: #6e8096;
   background: #202b3b;
 }
-.demo-banner {
+.readonly-banner {
   display: flex;
   align-items: center;
   gap: 9px;
@@ -443,13 +443,13 @@ h1 {
   line-height: 1.6;
   margin-bottom: 23px;
 }
-.demo-banner > span {
+.readonly-banner > span {
   flex: 1;
 }
-.demo-banner > svg {
+.readonly-banner > svg {
   color: #c9b575;
 }
-.demo-banner button {
+.readonly-banner button {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -1312,14 +1312,6 @@ h1 {
 .evidence small {
   color: #5f7b97;
   font-size: 10px;
-}
-.demo-label {
-  background: #373121;
-  color: #c9b57b;
-  padding: 8px 10px;
-  border-radius: 4px;
-  font-size: 11px;
-  margin: -4px 0 16px;
 }
 .settings-layout {
   display: grid;
@@ -2246,14 +2238,14 @@ h1 {
     align-self: stretch;
     justify-content: flex-end;
   }
-  .demo-banner {
+  .readonly-banner {
     font-size: 10px;
     align-items: flex-start;
   }
-  .demo-banner > svg {
+  .readonly-banner > svg {
     margin-top: 3px;
   }
-  .demo-banner button {
+  .readonly-banner button {
     display: none;
   }
   .metrics-grid {

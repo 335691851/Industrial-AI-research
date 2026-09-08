@@ -1,7 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { recentNews, mergeItems, mergeProfiles } from "../src/lib/domain";
-import { demoDatabase } from "../src/lib/seed";
 import {
   publicAddress,
   validateUrl,
@@ -20,8 +19,37 @@ import {
   requireWrite,
 } from "../src/server/security";
 
+const baseItem = () => ({
+  id: "item-1",
+  eventKey: "event-1",
+  title: "工业智能平台发布",
+  summary: "企业披露工业智能平台及面向制造现场的应用能力。",
+  implication: "研究判断",
+  category: "产品方案" as const,
+  topic: "工业智能" as const,
+  importance: "high" as const,
+  company: "测试公司",
+  publishedAt: "2026-09-08T10:00:00Z",
+  observedAt: "2026-09-08T10:00:00Z",
+  confidence: 0.8,
+  evidence: [],
+  runId: "run-1",
+});
+const baseProfile = () => ({
+  id: "company-test",
+  name: "测试公司",
+  narrative: "企业叙事",
+  positioning: "市场定位",
+  solutions: [],
+  capabilities: [],
+  funding: "未披露",
+  implication: "研究判断",
+  evidence: [],
+  updatedAt: "2026-09-08T10:00:00Z",
+});
+
 test("news uses publication time, excludes unknown/future/older than 5 days", () => {
-  const base = { ...demoDatabase().items[0], category: "行业新闻" as const };
+  const base = { ...baseItem(), category: "行业新闻" as const };
   const now = new Date("2026-09-08T11:00:00Z");
   assert.equal(
     recentNews({ ...base, publishedAt: "2026-09-03T11:00:00Z" }, now),
@@ -44,7 +72,7 @@ test("news uses publication time, excludes unknown/future/older than 5 days", ()
 });
 test("fusion is idempotent, unions sources and never re-dates rediscovered events", () => {
   const item = {
-    ...demoDatabase().items[0],
+    ...baseItem(),
     evidence: [
       { url: "https://example.com/first", title: "first", quote: "original" },
     ],
@@ -68,7 +96,7 @@ test("fusion is idempotent, unions sources and never re-dates rediscovered event
 });
 test("profile update preserves known funding and historical capabilities", () => {
   const profile = {
-    ...demoDatabase().profiles[0],
+    ...baseProfile(),
     funding: "已披露融资",
     capabilities: ["能力A"],
   };

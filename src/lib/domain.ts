@@ -83,7 +83,6 @@ export type Item = {
   observedAt: string;
   confidence: number;
   evidence: Evidence[];
-  demo?: boolean;
   runId: string;
   eventKey: string;
 };
@@ -98,7 +97,6 @@ export type Profile = {
   implication: string;
   evidence: Evidence[];
   updatedAt: string;
-  demo?: boolean;
 };
 export type Run = {
   id: string;
@@ -131,8 +129,7 @@ export type Dashboard = {
   runs: Run[];
   settings: Settings;
   configured: Partial<Record<ProviderId, boolean>>;
-  storage: "local" | "supabase" | "preview";
-  demo: boolean;
+  storage: "local" | "supabase";
   editable: boolean;
 };
 

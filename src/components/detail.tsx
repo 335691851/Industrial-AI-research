@@ -34,11 +34,6 @@ export function Detail({
             <X size={20} />
           </button>
         </header>
-        {value.demo && (
-          <div className="demo-label">
-            演示内容 · 用于展示研究框架，不作为事实依据
-          </div>
-        )}
         <h2>{item?.title ?? profile?.name}</h2>
         {item && (
           <>
@@ -107,9 +102,7 @@ export function Detail({
             </div>
           ))
         ) : (
-          <p className="muted">
-            此为演示内容；真实研究会在这里展示来源链接与对应原文。
-          </p>
+          <p className="muted">暂无可核验的来源与原文证据。</p>
         )}
       </article>
     </dialog>

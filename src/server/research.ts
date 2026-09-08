@@ -457,7 +457,6 @@ export async function executeRun(
       })
       .addNode("extract", async (state) => {
         const previous = db.items
-          .filter((i) => !i.demo)
           .slice(0, 80)
           .map((i) => ({
             eventKey: i.eventKey,
