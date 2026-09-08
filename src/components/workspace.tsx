@@ -1,0 +1,746 @@
+"use client";
+import { useCallback, useEffect, useState } from "react";
+import {
+  Activity,
+  ArrowDown,
+  ArrowRight,
+  ArrowUpRight,
+  Bot,
+  Boxes,
+  Check,
+  ChevronRight,
+  CircleHelp,
+  Clock3,
+  Database,
+  ExternalLink,
+  Flame,
+  Globe2,
+  LayoutDashboard,
+  Loader2,
+  Menu,
+  Radio,
+  RefreshCw,
+  Search,
+  Settings2,
+  ShieldCheck,
+  Sparkles,
+  Target,
+  TrendingUp,
+  Zap,
+} from "lucide-react";
+import {
+  Dashboard,
+  Item,
+  Profile,
+  Settings,
+  topics,
+  categories,
+} from "@/lib/domain";
+import { SourceSettings } from "./source-settings";
+import { AgentPanel } from "./agent-panel";
+import { TrendChart, Heatmap } from "./charts";
+import { Detail } from "./detail";
+
+type View = "intelligence" | "sources" | "agents";
+export function Workspace() {
+  const [view, setView] = useState<View>("intelligence");
+  const [data, setData] = useState<Dashboard | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [query, setQuery] = useState("");
+  const [topic, setTopic] = useState("全部领域");
+  const [category, setCategory] = useState("全部情报");
+  const [detail, setDetail] = useState<Item | Profile | null>(null);
+  const [mobile, setMobile] = useState(false);
+  const [sort, setSort] = useState("importance");
+  const load = useCallback(async (silent = false) => {
+    if (!silent) setRefreshing(true);
+    try {
+      const r = await fetch("/api/workspace", { cache: "no-store" });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error);
+      setData(body);
+      setError("");
+    } catch (e) {
+      setError((e as Error).message || "连接失败，请重试。");
+    } finally {
+      setRefreshing(false);
+    }
+  }, []);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const active = data?.runs.some((r) => r.status === "running");
+  useEffect(() => {
+    const timer = setInterval(
+      () => {
+        if (document.visibilityState === "visible") void load(true);
+      },
+      active ? 3000 : 60000,
+    );
+    return () => clearInterval(timer);
+  }, [active, load]);
+  useEffect(() => {
+    if (!notice) return;
+    const timer = setTimeout(() => setNotice(""), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+  async function save(
+    settings: Settings,
+    keys?: Record<string, string>,
+    removeKeys?: string[],
+  ) {
+    const response = await fetch("/api/workspace", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ settings, keys, removeKeys }),
+    });
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.error);
+    setData(body);
+    setNotice("配置已保存，下一次研究将使用此配置。");
+  }
+  async function run(mode: "incremental" | "full", resumeId?: string) {
+    setRunning(true);
+    try {
+      const r = await fetch("/api/runs", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode, resumeId }),
+      });
+      const body = await r.json();
+      if (!r.ok) throw new Error(body.error);
+      setNotice("研究任务已启动，可在智能体记录中查看进度。");
+      await load(true);
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  }
+  function navigate(next: View) {
+    setView(next);
+    setMobile(false);
+  }
+  const items = data?.items ?? [];
+  const filtered = items
+    .filter(
+      (i) =>
+        (topic === "全部领域" || i.topic === topic) &&
+        (category === "全部情报" || i.category === category) &&
+        `${i.title} ${i.summary} ${i.company}`
+          .toLowerCase()
+          .includes(query.toLowerCase()),
+    )
+    .sort((a, b) =>
+      sort === "importance"
+        ? { critical: 0, high: 1, normal: 2 }[a.importance] -
+          { critical: 0, high: 1, normal: 2 }[b.importance]
+        : (b.publishedAt ?? b.observedAt).localeCompare(
+            a.publishedAt ?? a.observedAt,
+          ),
+    );
+  const highlights = items.filter((i) => i.importance !== "normal").slice(0, 3);
+  const names = {
+    intelligence: "情报展示",
+    sources: "来源配置",
+    agents: "智能体记录",
+  };
+  return (
+    <div className="app-shell">
+      <aside className={`sidebar ${mobile ? "mobile-open" : ""}`}>
+        <a className="brand" href="/" aria-label="炽橙工业智能导航首页">
+          <span className="brand-mark">
+            <Boxes size={25} strokeWidth={1.8} />
+          </span>
+          <span>
+            <strong>
+              炽橙科技<span className="brand-en">CHICHENG TECH</span>
+            </strong>
+          </span>
+        </a>
+        <div className="workspace-label">RESEARCH WORKSPACE</div>
+        <nav>
+          {[
+            {
+              id: "intelligence" as View,
+              icon: LayoutDashboard,
+              name: "情报展示",
+              sub: "Intelligence",
+            },
+            {
+              id: "sources" as View,
+              icon: Settings2,
+              name: "来源配置",
+              sub: "Sources",
+            },
+            {
+              id: "agents" as View,
+              icon: Bot,
+              name: "智能体记录",
+              sub: "Agents",
+            },
+          ].map(({ id, icon: Icon, name, sub }) => (
+            <button
+              key={id}
+              className={`nav-item ${view === id ? "active" : ""}`}
+              onClick={() => navigate(id)}
+            >
+              <Icon size={19} />
+              <span>
+                {name}
+                <small>{sub}</small>
+              </span>
+              {id === "intelligence" ? (
+                <span className="nav-count">
+                  {items.length.toString().padStart(2, "0")}
+                </span>
+              ) : (
+                <ChevronRight size={14} />
+              )}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-divider" />
+        <div className="workspace-label">FOCUS AREAS</div>
+        <div className="focus-links">
+          {topics.map((t, i) => (
+            <button
+              key={t}
+              onClick={() => {
+                setTopic(t);
+                navigate("intelligence");
+              }}
+            >
+              <i
+                style={{
+                  background: [
+                    "#fb8847",
+                    "#789aff",
+                    "#ad91ee",
+                    "#5cc8b0",
+                    "#d5b567",
+                    "#70899e",
+                  ][i],
+                }}
+              />
+              {t}
+            </button>
+          ))}
+        </div>
+        <div className="sidebar-bottom">
+          <div className="agent-status">
+            <span className={`status-dot ${active ? "pulse" : ""}`} />
+            <span>
+              {active ? "研究智能体运行中" : "每日研究计划"}
+              <small>19:00 · Asia / Shanghai</small>
+            </span>
+            <Radio size={16} />
+          </div>
+          <div className="company-footer">
+            <span className="avatar">炽</span>
+            <div>
+              炽橙行业研究室<small>企业共享工作台 · 无需登录</small>
+            </div>
+          </div>
+        </div>
+      </aside>
+      {mobile && (
+        <button
+          aria-label="关闭导航"
+          className="mobile-overlay"
+          onClick={() => setMobile(false)}
+        />
+      )}
+      <div className="main-shell">
+        <header className="topbar">
+          <div className="breadcrumb">
+            <button
+              aria-label="打开导航"
+              className="icon-button mobile-menu"
+              onClick={() => setMobile(!mobile)}
+            >
+              <Menu size={20} />
+            </button>
+            <Globe2 size={16} />
+            <span>全球工业智能导航</span>
+            <ChevronRight size={14} />
+            <strong>{names[view]}</strong>
+          </div>
+          <div className="topbar-right">
+            <span className="live-label">
+              <i />
+              {data?.demo ? "DEMO WORKSPACE" : "RESEARCH WORKSPACE"}
+            </span>
+            <span className="topbar-divider" />
+            <span className="avatar small">炽</span>
+          </div>
+        </header>
+        <main>
+          <div className="page-heading">
+            <div>
+              <div className="eyebrow">
+                <span />
+                INDUSTRIAL INTELLIGENCE OBSERVATORY
+              </div>
+              <h1>
+                {view === "intelligence"
+                  ? "全球工业智能情报"
+                  : view === "sources"
+                    ? "定义你的研究边界"
+                    : "让研究持续发生"}
+                <span className="heading-dot">.</span>
+              </h1>
+              <p>
+                {view === "intelligence"
+                  ? "洞察技术演进，追踪产业变化，发现下一步的可能。"
+                  : view === "sources"
+                    ? "围绕炽橙的技术与业务方向，连接值得关注的信息。"
+                    : "从信息采集到证据核验，每一步研究都有迹可循。"}
+              </p>
+            </div>
+            <div className="heading-actions">
+              <button
+                className="button secondary"
+                onClick={() => void load()}
+                disabled={refreshing}
+              >
+                <RefreshCw size={15} className={refreshing ? "spin" : ""} />
+                刷新展示
+              </button>
+              <button
+                className="button primary"
+                onClick={() => void run("incremental")}
+                disabled={running || active || !data?.editable}
+              >
+                <Sparkles size={16} />
+                {active ? "研究进行中" : "开始研究"}
+                <ArrowUpRight size={16} />
+              </button>
+            </div>
+          </div>
+          {error && (
+            <div className="error-banner" role="alert">
+              {error}
+              <button onClick={() => void load()}>重试连接</button>
+            </div>
+          )}
+          {!data && !error && (
+            <div className="loading-state">
+              <Loader2 className="spin" />
+              <p>正在连接研究工作台…</p>
+            </div>
+          )}
+          {data && (
+            <>
+              {data.demo && (
+                <div className="demo-banner">
+                  <CircleHelp size={15} />
+                  <span>
+                    当前为演示数据，用于预览内容框架与交互；不代表最新新闻或事实。配置
+                    API Key 并运行研究后显示真实情报。
+                  </span>
+                  <button onClick={() => navigate("agents")}>
+                    配置智能体 <ArrowRight size={14} />
+                  </button>
+                </div>
+              )}
+              {!data.editable && (
+                <div className="demo-banner">
+                  当前入口为只读。配置与运行操作需通过企业可信入口访问。
+                </div>
+              )}
+              {view === "sources" ? (
+                <SourceSettings data={data} save={save} />
+              ) : view === "agents" ? (
+                <AgentPanel
+                  data={data}
+                  save={save}
+                  run={run}
+                  busy={running || Boolean(active)}
+                />
+              ) : (
+                <>
+                  <div className="metrics-grid">
+                    {[
+                      {
+                        label: "当前研究情报",
+                        value: items.length,
+                        icon: Radio,
+                        note: "新闻限定最近 5 天",
+                        color: "orange",
+                      },
+                      {
+                        label: "重大信号",
+                        value: items.filter(
+                          (i) =>
+                            i.importance === "critical" ||
+                            i.importance === "high",
+                        ).length,
+                        icon: Zap,
+                        note: "优先关注的产业变化",
+                        color: "purple",
+                      },
+                      {
+                        label: "重点研究企业",
+                        value: data.settings.companies.length,
+                        icon: Target,
+                        note: `${data.profiles.length} 份企业研究画像`,
+                        color: "blue",
+                      },
+                      {
+                        label: "已启用信息源",
+                        value: data.settings.sources.filter((s) => s.enabled)
+                          .length,
+                        icon: Globe2,
+                        note: "官网 · 研究平台 · 公众号",
+                        color: "green",
+                      },
+                    ].map((m) => (
+                      <div className="metric" key={m.label}>
+                        <div className="metric-label">
+                          {m.label}
+                          <m.icon size={17} className={`text-${m.color}`} />
+                        </div>
+                        <div className="metric-value">
+                          {m.value.toString().padStart(2, "0")}
+                          <span className={`metric-pill ${m.color}`}>
+                            {m.color === "orange"
+                              ? "INSIGHTS"
+                              : m.color === "purple"
+                                ? "PRIORITY"
+                                : m.color === "blue"
+                                  ? "COMPANIES"
+                                  : "SOURCES"}
+                          </span>
+                        </div>
+                        <div className="metric-note">
+                          <span className={`tiny-dot ${m.color}`} />
+                          {m.note}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  <section className="highlights-section">
+                    <div className="section-heading">
+                      <h2>
+                        <Flame size={18} className="text-orange" />
+                        值得优先关注
+                        <span className="small-label">PRIORITY SIGNALS</span>
+                      </h2>
+                      <span className="subtle">重大信息 · 核心提炼</span>
+                    </div>
+                    <div className="highlight-grid">
+                      {highlights.map((item, i) => (
+                        <button
+                          key={item.id}
+                          className={`highlight-card highlight-${i}`}
+                          onClick={() => setDetail(item)}
+                        >
+                          <div className="highlight-top">
+                            <span
+                              className={`priority-badge ${item.importance}`}
+                            >
+                              {item.importance === "critical"
+                                ? "重大信号"
+                                : "重点关注"}
+                            </span>
+                            <ArrowUpRight size={19} />
+                          </div>
+                          <h3>{item.title}</h3>
+                          <p>{item.summary}</p>
+                          <div className="highlight-bottom">
+                            <span>{item.company}</span>
+                            <span>{item.topic}</span>
+                            {item.demo && <small>演示</small>}
+                          </div>
+                        </button>
+                      ))}
+                      {!highlights.length && (
+                        <div className="empty-state">
+                          <ShieldCheck />
+                          <p>暂未发现重大信号</p>
+                          <small>高优先级的可核验情报会在这里呈现。</small>
+                        </div>
+                      )}
+                    </div>
+                  </section>
+                  <div className="analytics-grid">
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <h2>
+                          <TrendingUp size={17} />
+                          技术关注趋势
+                        </h2>
+                        <span className="subtle">近 5 天 · 情报数量</span>
+                      </div>
+                      <TrendChart items={items} />
+                    </section>
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <h2>
+                          <Boxes size={17} />
+                          产业热点分布
+                        </h2>
+                        <span className="subtle">企业 × 研究方向</span>
+                      </div>
+                      <Heatmap items={items} onTopic={setTopic} />
+                    </section>
+                  </div>
+                  <div className="content-grid">
+                    <section className="feed-section">
+                      <div className="section-heading">
+                        <h2>
+                          情报动态
+                          <span className="small-label">INTELLIGENCE FEED</span>
+                        </h2>
+                        <span className="subtle">
+                          <span className="status-dot" />
+                          融合更新
+                        </span>
+                      </div>
+                      <div className="feed-controls">
+                        <div className="search-field">
+                          <Search size={16} />
+                          <input
+                            aria-label="搜索情报"
+                            value={query}
+                            onChange={(e) => setQuery(e.target.value)}
+                            placeholder="搜索企业、技术或关键词…"
+                          />
+                        </div>
+                        <select
+                          aria-label="研究方向筛选"
+                          value={topic}
+                          onChange={(e) => setTopic(e.target.value)}
+                        >
+                          {["全部领域", ...topics].map((t) => (
+                            <option key={t}>{t}</option>
+                          ))}
+                        </select>
+                        <select
+                          aria-label="情报排序"
+                          value={sort}
+                          onChange={(e) => setSort(e.target.value)}
+                        >
+                          <option value="importance">重要度优先</option>
+                          <option value="date">最新发布</option>
+                        </select>
+                      </div>
+                      <div className="category-tabs">
+                        {["全部情报", ...categories].map((c) => (
+                          <button
+                            key={c}
+                            className={category === c ? "selected" : ""}
+                            onClick={() => setCategory(c)}
+                          >
+                            {c}
+                            {c === "全部情报" && <span>{items.length}</span>}
+                          </button>
+                        ))}
+                      </div>
+                      <div className="feed-list">
+                        {filtered.map((item) => (
+                          <button
+                            className="feed-card"
+                            key={item.id}
+                            onClick={() => setDetail(item)}
+                          >
+                            <div
+                              className={`feed-icon topic-${topics.indexOf(item.topic)}`}
+                            >
+                              <TopicIcon category={item.category} />
+                            </div>
+                            <div className="feed-card-content">
+                              <div className="feed-meta">
+                                <span
+                                  className={`category-label topic-${topics.indexOf(item.topic)}`}
+                                >
+                                  {item.category}
+                                </span>
+                                <span>{item.company}</span>
+                                <span className="feed-date">
+                                  {item.publishedAt
+                                    ? new Date(
+                                        item.publishedAt,
+                                      ).toLocaleDateString("zh-CN", {
+                                        month: "2-digit",
+                                        day: "2-digit",
+                                      })
+                                    : "日期待核实"}
+                                </span>
+                              </div>
+                              <h3>
+                                {item.title}
+                                {item.importance === "critical" && (
+                                  <span className="priority-badge critical">
+                                    重大
+                                  </span>
+                                )}
+                              </h3>
+                              <p>{item.summary}</p>
+                              <div className="feed-footer">
+                                <span className="tag">{item.topic}</span>
+                                <span>
+                                  <ShieldCheck size={12} />
+                                  {item.demo
+                                    ? "演示内容"
+                                    : `${item.evidence.length} 条原文证据`}
+                                </span>
+                                <ArrowUpRight size={15} />
+                              </div>
+                            </div>
+                          </button>
+                        ))}
+                        {!filtered.length && (
+                          <div className="empty-state">
+                            <Search />
+                            <p>
+                              {items.length
+                                ? "没有匹配的情报"
+                                : "等待第一份真实研究"}
+                            </p>
+                            <small>
+                              {items.length
+                                ? "试试其他关键词或研究方向。"
+                                : "配置来源与模型密钥后，开始一次研究。"}
+                            </small>
+                            {items.length > 0 && (
+                              <button
+                                className="button secondary"
+                                onClick={() => {
+                                  setQuery("");
+                                  setTopic("全部领域");
+                                  setCategory("全部情报");
+                                }}
+                              >
+                                重置筛选
+                              </button>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      <div className="feed-end">
+                        — 已展示 {filtered.length} 条情报 · 新闻窗口 5
+                        天，研究档案持续积累 —
+                      </div>
+                    </section>
+                    <aside className="research-rail">
+                      <section className="panel competitors">
+                        <div className="panel-heading">
+                          <h2>
+                            <Target size={17} />
+                            重点企业观察
+                          </h2>
+                          <span className="tag">持续追踪</span>
+                        </div>
+                        {data.profiles.map((p, i) => (
+                          <button
+                            className="company-card"
+                            key={p.id}
+                            onClick={() => setDetail(p)}
+                          >
+                            <div className="company-card-top">
+                              <span className={`company-logo logo-${i % 4}`}>
+                                {p.name === "NVIDIA" ? "N" : p.name.slice(0, 1)}
+                              </span>
+                              <div>
+                                <strong>{p.name}</strong>
+                                <small>
+                                  {p.demo ? "示例研究框架" : "已核验原文引用"}
+                                </small>
+                              </div>
+                              <ArrowUpRight size={16} />
+                            </div>
+                            <p>{p.narrative}</p>
+                            <div className="company-card-bottom">
+                              <span>叙事</span>
+                              <span>产品</span>
+                              <span>融资</span>
+                              <ChevronRight size={13} />
+                            </div>
+                          </button>
+                        ))}
+                        {!data.profiles.length && (
+                          <div className="empty-state">
+                            <Target />
+                            <p>尚无企业画像</p>
+                          </div>
+                        )}
+                      </section>
+                      <section className="research-lens">
+                        <div className="lens-icon">
+                          <Boxes size={24} />
+                        </div>
+                        <div className="eyebrow">THE CHICHENG LENS</div>
+                        <h3>
+                          从炽橙的视角
+                          <br />
+                          理解产业变化
+                        </h3>
+                        <p>
+                          自主几何内核 × 云化仿真 × AI
+                          <br />
+                          关注技术如何走向工业现场。
+                        </p>
+                        <a
+                          href="https://www.czy3d.com/about-us/"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          企业研究基线 <ExternalLink size={13} />
+                        </a>
+                      </section>
+                      <div className="rail-note">
+                        <Clock3 size={15} />
+                        <p>
+                          每天 19:00 开始当天研究
+                          <br />
+                          <span>全量梳理与增量发现，统一融合展示</span>
+                        </p>
+                      </div>
+                    </aside>
+                  </div>
+                </>
+              )}
+              <footer className="page-footer">
+                <span>
+                  CHICHENG <span className="text-orange">/</span> INDUSTRIAL
+                  INTELLIGENCE
+                </span>
+                <span>
+                  <Database size={12} />
+                  {data.storage === "preview"
+                    ? "只读演示 · 尚未连接数据库"
+                    : data.storage === "local"
+                      ? "本地工作区"
+                      : "Supabase 已连接"}{" "}
+                  · 所有时间为北京时间
+                </span>
+              </footer>
+            </>
+          )}
+        </main>
+      </div>
+      {detail && <Detail value={detail} close={() => setDetail(null)} />}
+      {notice && (
+        <div className="toast" role="status">
+          <Check size={17} />
+          <span>{notice}</span>
+          <button aria-label="关闭提示" onClick={() => setNotice("")}>
+            ×
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+function TopicIcon({ category }: { category: string }) {
+  if (category === "前沿研究") return <Sparkles size={21} />;
+  if (category === "投融资") return <TrendingUp size={21} />;
+  if (category === "产品方案") return <Boxes size={21} />;
+  if (category === "重大成果") return <Zap size={21} />;
+  return <Activity size={21} />;
+}
