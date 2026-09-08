@@ -1,7 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { mkdir, readFile, writeFile, rename, rmdir } from "node:fs/promises";
 import path from "node:path";
-import { Database, Dashboard, recentNews } from "@/lib/domain";
+import { Database, Dashboard, Item, Profile, recentNews } from "@/lib/domain";
 import { emptyDatabase } from "@/lib/seed";
 
 const dataFolder = () => path.join(process.cwd(), ".data");
@@ -22,6 +22,19 @@ function localAllowed() {
     throw new Error(
       "尚未连接 Supabase，请配置 SUPABASE_URL 和 SUPABASE_SERVICE_ROLE_KEY。",
     );
+}
+// A one-way compatibility cleanup for workspaces created before demo content
+// was removed. The cleaned snapshot is persisted on the next mutation.
+function removeLegacyDemoContent(db: Database): Database {
+  const items = db.items.filter(
+    (item) => (item as Item & { demo?: unknown }).demo !== true,
+  );
+  const profiles = db.profiles.filter(
+    (profile) => (profile as Profile & { demo?: unknown }).demo !== true,
+  );
+  return items.length === db.items.length && profiles.length === db.profiles.length
+    ? db
+    : { ...db, items, profiles };
 }
 async function cloudRow() {
   const db = client();
@@ -48,15 +61,16 @@ async function cloudRow() {
     error = row.error;
   }
   if (error || !data) throw new Error("Supabase 工作区不存在。");
-  return data as { version: number; payload: Database };
+  const row = data as { version: number; payload: Database };
+  return { ...row, payload: removeLegacyDemoContent(row.payload) };
 }
 export async function readDatabase(): Promise<Database> {
   if (isCloud()) return (await cloudRow()).payload;
   localAllowed();
   try {
-    return JSON.parse(
+    return removeLegacyDemoContent(JSON.parse(
       await readFile(path.join(dataFolder(), "workspace.json"), "utf8"),
-    );
+    ));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     return emptyDatabase();
