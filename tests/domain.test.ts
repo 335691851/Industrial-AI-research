@@ -8,7 +8,11 @@ import {
   parsePage,
   canonicalUrl,
 } from "../src/server/collector";
-import { extractionSchema, groundExtraction } from "../src/server/research";
+import {
+  extractionSchema,
+  groundExtraction,
+  normalizeExtraction,
+} from "../src/server/research";
 import {
   canEdit,
   equalSecret,
@@ -156,6 +160,54 @@ test("grounding discards fabricated quotes and binds dates to verified documents
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].evidence[0].url, "https://example.com/real");
   assert.equal(result.items[0].publishedAt, "2026-09-01T00:00:00Z");
+});
+test("normalizes DeepSeek-style aliases without weakening evidence requirements", () => {
+  const output = normalizeExtraction({
+    intelligence: [
+      {
+        headline: "测试公司推出工业智能平台",
+        core_fact: "测试公司正式发布工业智能平台，并披露面向制造现场的应用能力。",
+        insight: "可作为炽橙关注的工业智能能力布局。",
+        type: "产品",
+        direction: "工业AI",
+        priority: "重大",
+        enterprise: "测试公司",
+        event_key: "test-company-agent-launch",
+        certainty: "90%",
+        citations: [
+          {
+            document_index: 0,
+            excerpt: "正式发布工业智能平台，并披露面向制造现场的应用能力",
+          },
+        ],
+      },
+      { headline: "没有引用的条目", core_fact: "这条内容不会被发布，因为没有可核验证据。" },
+    ],
+    company_profiles: [
+      {
+        company: "测试公司",
+        story: "以工业智能平台连接制造现场数据和应用。",
+        position: "制造业工业智能软件提供商。",
+        product_solutions: "工业智能平台、现场应用",
+        abilities: "制造数据分析、智能体编排",
+        investment: "未披露",
+        takeaway: "建议持续跟踪其产品落地。",
+        citations: [
+          {
+            document_index: 0,
+            excerpt: "正式发布工业智能平台，并披露面向制造现场的应用能力",
+          },
+        ],
+      },
+    ],
+  });
+  assert.ok(output.extraction);
+  assert.equal(output.extraction!.items.length, 1);
+  assert.equal(output.extraction!.items[0].category, "产品方案");
+  assert.equal(output.extraction!.items[0].topic, "工业智能");
+  assert.equal(output.extraction!.items[0].importance, "critical");
+  assert.equal(output.extraction!.items[0].confidence, 0.9);
+  assert.equal(output.extraction!.profiles.length, 1);
 });
 test("writes reject cross-site requests and production defaults to read-only", () => {
   assert.throws(() =>

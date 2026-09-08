@@ -60,6 +60,144 @@ export const extractionSchema = z.object({
     .max(15),
 });
 type Extraction = z.infer<typeof extractionSchema>;
+
+const itemSchema = extractionSchema.shape.items.element;
+const profileSchema = extractionSchema.shape.profiles.element;
+type NormalizedExtraction = {
+  extraction?: Extraction;
+  diagnostic: string;
+};
+
+const asRecord = (value: unknown): Record<string, unknown> =>
+  value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+const text = (value: unknown) =>
+  typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
+const values = (value: unknown) => {
+  if (Array.isArray(value)) return value.map(text).filter(Boolean);
+  const single = text(value);
+  return single ? single.split(/[、,，；;\n]/).map((part) => part.trim()).filter(Boolean) : [];
+};
+const pick = (record: Record<string, unknown>, keys: string[]) => {
+  for (const key of keys) if (record[key] !== undefined) return record[key];
+  return undefined;
+};
+const enumValue = <T extends readonly string[]>(
+  value: unknown,
+  allowed: T,
+  aliases: Record<string, T[number]>,
+  fallback: T[number],
+) => {
+  const candidate = text(value).replace(/\s+/g, "");
+  if ((allowed as readonly string[]).includes(candidate)) return candidate as T[number];
+  return aliases[candidate.toLowerCase()] ?? fallback;
+};
+const categoryAliases: Record<string, (typeof categories)[number]> = {
+  "行业资讯": "行业新闻",
+  "行业动态": "行业新闻",
+  "新闻": "行业新闻",
+  "公司动态": "企业动态",
+  "企业新闻": "企业动态",
+  "竞品动态": "企业动态",
+  "融资": "投融资",
+  "投融资动态": "投融资",
+  "论文": "前沿研究",
+  "研究": "前沿研究",
+  "技术研究": "前沿研究",
+  "成果": "重大成果",
+  "技术成果": "重大成果",
+  "产品": "产品方案",
+  "解决方案": "产品方案",
+};
+const topicAliases: Record<string, (typeof topics)[number]> = {
+  "工业ai": "工业智能",
+  "工业人工智能": "工业智能",
+  "工业智能体": "工业智能",
+  "3dai": "3D 模型 + AI",
+  "3d+ai": "3D 模型 + AI",
+  "三维+ai": "3D 模型 + AI",
+  "生成式3d": "3D 模型 + AI",
+  "制造业ai": "制造业 + AI",
+  "智能制造": "制造业 + AI",
+};
+const importanceAliases: Record<string, "critical" | "high" | "normal"> = {
+  "重大": "critical",
+  "关键": "critical",
+  "高": "high",
+  "重要": "high",
+  "一般": "normal",
+  "普通": "normal",
+};
+const confidence = (value: unknown) => {
+  const raw = Number.parseFloat(text(value).replace("%", ""));
+  if (!Number.isFinite(raw)) return 0.7;
+  return Math.max(0, Math.min(1, raw > 1 ? raw / 100 : raw));
+};
+const citations = (value: unknown) =>
+  values(value).length && !Array.isArray(value)
+    ? []
+    : (Array.isArray(value) ? value : []).map((entry) => {
+        const source = asRecord(entry);
+        return {
+          document: Number.parseInt(
+            text(pick(source, ["document", "documentIndex", "document_index", "doc", "sourceIndex", "source_document"])),
+            10,
+          ),
+          quote: text(pick(source, ["quote", "citation", "excerpt", "text", "content"])),
+        };
+      });
+
+/** Convert common provider-specific JSON field names into the strict publish contract.
+ * It never manufactures evidence: malformed entries are discarded before grounding. */
+export function normalizeExtraction(value: unknown): NormalizedExtraction {
+  const root = asRecord(value);
+  const itemCandidates = Array.isArray(pick(root, ["items", "intelligence", "events", "insights"]))
+    ? (pick(root, ["items", "intelligence", "events", "insights"]) as unknown[])
+    : [];
+  const profileCandidates = Array.isArray(pick(root, ["profiles", "companyProfiles", "company_profiles"]))
+    ? (pick(root, ["profiles", "companyProfiles", "company_profiles"]) as unknown[])
+    : [];
+  const normalizedItems = itemCandidates.map((candidate) => {
+    const source = asRecord(candidate);
+    return {
+      title: text(pick(source, ["title", "headline", "name"])),
+      summary: text(pick(source, ["summary", "coreFact", "core_fact", "fact", "description"])),
+      implication: text(pick(source, ["implication", "insight", "analysis", "takeaway"])),
+      category: enumValue(pick(source, ["category", "type", "classification"]), categories, categoryAliases, "行业新闻"),
+      topic: enumValue(pick(source, ["topic", "direction", "domain"]), topics, topicAliases, "工业智能"),
+      importance: enumValue(pick(source, ["importance", "priority", "level"]), ["critical", "high", "normal"] as const, importanceAliases, "normal"),
+      company: text(pick(source, ["company", "enterprise", "organization", "org"])) || "行业",
+      eventKey: text(pick(source, ["eventKey", "event_key", "key", "id"])),
+      confidence: confidence(pick(source, ["confidence", "certainty", "score"])),
+      evidence: citations(pick(source, ["evidence", "citations", "sources"])),
+    };
+  });
+  const normalizedProfiles = profileCandidates.map((candidate) => {
+    const source = asRecord(candidate);
+    return {
+      name: text(pick(source, ["name", "company", "enterprise"])),
+      narrative: text(pick(source, ["narrative", "story", "enterpriseNarrative"])),
+      positioning: text(pick(source, ["positioning", "position", "marketPosition"])),
+      solutions: values(pick(source, ["solutions", "productSolutions", "product_solutions", "products"])),
+      capabilities: values(pick(source, ["capabilities", "abilities", "technologyCapabilities"])),
+      funding: text(pick(source, ["funding", "investment", "financing"])) || "未披露",
+      implication: text(pick(source, ["implication", "analysis", "takeaway"])),
+      evidence: citations(pick(source, ["evidence", "citations", "sources"])),
+    };
+  });
+  const items = normalizedItems.flatMap((item) => {
+    const parsed = itemSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+  const profiles = normalizedProfiles.flatMap((profile) => {
+    const parsed = profileSchema.safeParse(profile);
+    return parsed.success ? [parsed.data] : [];
+  });
+  const parsed = extractionSchema.safeParse({ items, profiles });
+  const diagnostic = `识别事件 ${itemCandidates.length} 条（可用 ${items.length} 条），企业画像 ${profileCandidates.length} 份（可用 ${profiles.length} 份）`;
+  return parsed.success ? { extraction: parsed.data, diagnostic } : { diagnostic };
+}
 const State = Annotation.Root({
   settings: Annotation<Settings>(),
   mode: Annotation<Run["mode"]>(),
@@ -333,9 +471,9 @@ export async function executeRun(
               title: "标题",
               summary: "可核验的核心事实",
               implication: "对炽橙的分析判断",
-              category: categories.join("|"),
-              topic: topics.join("|"),
-              importance: "critical|high|normal",
+              category: "产品方案",
+              topic: "工业智能",
+              importance: "high",
               company: "企业名称",
               eventKey:
                 "同一事件复用已有eventKey，否则给出稳定的企业-产品-事件标识",
@@ -370,10 +508,22 @@ export async function executeRun(
             keywords: state.settings.keywords,
             companies: state.settings.companies,
             existingEvents: previous,
+            allowedValues: {
+              category: categories,
+              topic: topics,
+              importance: ["critical", "high", "normal"],
+            },
+            rules: [
+              "items 和 profiles 必须始终为数组；没有内容时输出 []。",
+              "category、topic、importance 每个字段只能从 allowedValues 中选择一个值，不能用 | 连接多个值。",
+              "evidence 的 document 是 documents 中的整数序号；quote 必须逐字复制正文。",
+              "不得改写字段名，不得使用 Markdown 或代码围栏。",
+            ],
             outputShape: shape,
             documents: batch,
           });
           let result: Extraction | undefined;
+          let lastDiagnostic = "";
           for (let attempt = 0; attempt < 2; attempt++) {
             const value = await dependencies.complete(
               settings.selectedProvider,
@@ -382,18 +532,21 @@ export async function executeRun(
               system,
               prompt +
                 (attempt
-                  ? "\n上次结构校验失败。严格使用模板字段、枚举值及原文引用，输出合法JSON。"
+                  ? `\n上次返回无法发布（${lastDiagnostic}）。请仅修正 JSON 结构；严格使用模板字段、枚举值及原文引用，输出合法 JSON。`
                   : ""),
               signal,
             );
-            const parsed = extractionSchema.safeParse(value);
-            if (parsed.success) {
-              result = parsed.data;
+            const normalized = normalizeExtraction(value);
+            lastDiagnostic = normalized.diagnostic;
+            if (normalized.extraction) {
+              result = normalized.extraction;
               break;
             }
           }
           if (!result)
-            throw new Error("模型内容框架校验失败，未发布。可从检查点恢复。");
+            throw new Error(
+              `模型返回内容无法映射到发布框架（${lastDiagnostic}），未发布。可从检查点恢复。`,
+            );
           extracted.items.push(...result.items);
           extracted.profiles.push(...result.profiles);
           await log(
