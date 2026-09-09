@@ -13,6 +13,7 @@ import {
   ExternalLink,
   Flame,
   Globe2,
+  KeyRound,
   LayoutDashboard,
   Loader2,
   Menu,
@@ -53,10 +54,16 @@ export function Workspace() {
   const [detail, setDetail] = useState<Item | Profile | null>(null);
   const [mobile, setMobile] = useState(false);
   const [sort, setSort] = useState("importance");
+  const [accessToken, setAccessToken] = useState("");
+  const [unlockOpen, setUnlockOpen] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
   const load = useCallback(async (silent = false) => {
     if (!silent) setRefreshing(true);
     try {
-      const r = await fetch("/api/workspace", { cache: "no-store" });
+      const r = await fetch("/api/workspace", {
+        cache: "no-store",
+        headers: accessToken ? { "x-workspace-token": accessToken } : {},
+      });
       const body = await r.json();
       if (!r.ok) throw new Error(body.error);
       setData(body);
@@ -66,6 +73,9 @@ export function Workspace() {
     } finally {
       setRefreshing(false);
     }
+  }, [accessToken]);
+  useEffect(() => {
+    setAccessToken(sessionStorage.getItem("workspace-access-token") ?? "");
   }, []);
   useEffect(() => {
     void load();
@@ -92,7 +102,10 @@ export function Workspace() {
   ) {
     const response = await fetch("/api/workspace", {
       method: "PUT",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(accessToken ? { "x-workspace-token": accessToken } : {}),
+      },
       body: JSON.stringify({ settings, keys, removeKeys }),
     });
     const body = await response.json();
@@ -105,7 +118,10 @@ export function Workspace() {
     try {
       const r = await fetch("/api/runs", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessToken ? { "x-workspace-token": accessToken } : {}),
+        },
         body: JSON.stringify({ mode, resumeId }),
       });
       const body = await r.json();
@@ -121,6 +137,31 @@ export function Workspace() {
   function navigate(next: View) {
     setView(next);
     setMobile(false);
+  }
+  async function unlock() {
+    const token = tokenInput.trim();
+    if (!token) return;
+    setRefreshing(true);
+    try {
+      const response = await fetch("/api/workspace", {
+        cache: "no-store",
+        headers: { "x-workspace-token": token },
+      });
+      const body = await response.json();
+      if (!response.ok || !body.editable)
+        throw new Error("管理口令不正确，请检查后重试。");
+      sessionStorage.setItem("workspace-access-token", token);
+      setAccessToken(token);
+      setTokenInput("");
+      setUnlockOpen(false);
+      setData(body);
+      setError("");
+      setNotice("管理权限已解锁，本次浏览器会话内有效。");
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setRefreshing(false);
+    }
   }
   const items = data?.items ?? [];
   const filtered = items
@@ -300,6 +341,15 @@ export function Workspace() {
               </p>
             </div>
             <div className="heading-actions">
+              {!data?.editable && (
+                <button
+                  className="button secondary"
+                  onClick={() => setUnlockOpen(true)}
+                >
+                  <KeyRound size={15} />
+                  管理解锁
+                </button>
+              )}
               <button
                 className="button secondary"
                 onClick={() => void load()}
@@ -335,7 +385,10 @@ export function Workspace() {
             <>
               {!data.editable && (
                 <div className="readonly-banner">
-                  当前入口为只读。配置与运行操作需通过企业可信入口访问。
+                  当前工作区已锁定。输入管理口令后可保存配置、管理密钥并启动研究。
+                  <button onClick={() => setUnlockOpen(true)}>
+                    管理解锁 <KeyRound size={14} />
+                  </button>
                 </div>
               )}
               {view === "sources" ? (
@@ -706,6 +759,46 @@ export function Workspace() {
         </main>
       </div>
       {detail && <Detail value={detail} close={() => setDetail(null)} />}
+      {unlockOpen && (
+        <dialog className="unlock-dialog" open>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void unlock();
+            }}
+          >
+            <div className="eyebrow">WORKSPACE ACCESS</div>
+            <h2>解锁管理操作</h2>
+            <p>
+              口令仅保存在当前浏览器会话中，用于保存配置和启动研究任务。
+            </p>
+            <input
+              aria-label="管理口令"
+              autoComplete="current-password"
+              autoFocus
+              type="password"
+              value={tokenInput}
+              onChange={(event) => setTokenInput(event.target.value)}
+              placeholder="输入管理口令"
+            />
+            <div>
+              <button
+                className="button secondary"
+                type="button"
+                onClick={() => {
+                  setTokenInput("");
+                  setUnlockOpen(false);
+                }}
+              >
+                取消
+              </button>
+              <button className="button primary" type="submit">
+                <KeyRound size={15} /> 解锁
+              </button>
+            </div>
+          </form>
+        </dialog>
+      )}
       {notice && (
         <div className="toast" role="status">
           <Check size={17} />

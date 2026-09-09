@@ -2506,3 +2506,46 @@ h1 {
     transition: none !important;
   }
 }
+
+.unlock-dialog {
+  width: min(430px, calc(100vw - 32px));
+  margin: auto;
+  padding: 0;
+  border: 1px solid #35445a;
+  border-radius: 12px;
+  background: #121a26;
+  color: #e6edf6;
+  box-shadow: 0 30px 90px rgb(0 0 0 / 55%);
+}
+.unlock-dialog::backdrop {
+  background: rgb(4 8 14 / 72%);
+}
+.unlock-dialog form {
+  display: grid;
+  gap: 15px;
+  padding: 25px;
+}
+.unlock-dialog h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.unlock-dialog p {
+  margin: -5px 0 0;
+  color: #8fa2b8;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.unlock-dialog input {
+  width: 100%;
+  padding: 11px 12px;
+  border: 1px solid #3a4a60;
+  border-radius: 7px;
+  background: #0c131d;
+  color: inherit;
+}
+.unlock-dialog form > div:last-child {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 3px;
+}
