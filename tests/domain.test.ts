@@ -1,12 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { recentNews, mergeItems, mergeProfiles } from "../src/lib/domain";
+import { recentNews, mergeItems, mergeProfiles, topics } from "../src/lib/domain";
 import {
   publicAddress,
   validateUrl,
   parsePage,
   canonicalUrl,
   buildDiscoveryPlan,
+  discover,
 } from "../src/server/collector";
 import { defaultSettings } from "../src/lib/seed";
 import {
@@ -154,8 +155,8 @@ test("parser takes explicit publication metadata, not current time", () => {
     null,
   );
 });
-test("discovery plan always combines baseline, configured targets and sites", () => {
-  const plan = buildDiscoveryPlan(defaultSettings, 0);
+test("discovery plan covers every configured target and site", () => {
+  const plan = buildDiscoveryPlan(defaultSettings, "full");
   const lanes = new Set(plan.map((entry) => entry.lane));
   assert.deepEqual(
     lanes,
@@ -168,6 +169,55 @@ test("discovery plan always combines baseline, configured targets and sites", ()
   );
   assert.ok(plan.some((entry) => entry.query.includes("industrial AI")));
   assert.ok(plan.some((entry) => entry.query.includes("site:press.siemens.com")));
+  for (const direction of topics)
+    assert.ok(plan.some((entry) => entry.coverageKey === `方向:${direction}`));
+  for (const keyword of defaultSettings.keywords)
+    assert.ok(plan.some((entry) => entry.query.includes(`"${keyword}"`)));
+  for (const company of defaultSettings.companies)
+    assert.ok(plan.some((entry) => entry.query.includes(`"${company}"`)));
+});
+test("Tavily discovery uses Advanced search, date scope and URL deduplication", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.TAVILY_API_KEY;
+  const requests: Record<string, unknown>[] = [];
+  process.env.TAVILY_API_KEY = "test-tavily-key";
+  globalThis.fetch = async (_input, init) => {
+    requests.push(JSON.parse(String(init?.body)));
+    return new Response(
+      JSON.stringify({
+        results: [
+          { url: "https://example.com/report?utm_source=search" },
+          { url: "https://example.com/report" },
+        ],
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  };
+  try {
+    const result = await discover(
+      { ...defaultSettings, keywords: [], companies: [], sources: [] },
+      "full",
+      [],
+      "2025-09-09",
+      AbortSignal.timeout(5000),
+    );
+    assert.equal(result.queryCount, 10);
+    assert.equal(result.resultCount, 20);
+    assert.equal(result.deduplicatedCount, 1);
+    assert.ok(
+      requests.every(
+        (request) =>
+          request.search_depth === "advanced" &&
+          request.chunks_per_source === 3 &&
+          request.max_results === 10 &&
+          request.start_date === "2025-09-09",
+      ),
+    );
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.TAVILY_API_KEY;
+    else process.env.TAVILY_API_KEY = originalKey;
+  }
 });
 test("grounding discards fabricated quotes and binds dates to verified documents", () => {
   const item = {

@@ -1888,6 +1888,23 @@ h1 {
   color: #5e7590;
   margin-bottom: 19px;
 }
+.run-source-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin: -5px 0 20px;
+}
+.run-source-stats span {
+  border: 1px solid #29384a;
+  background: #141f2b;
+  color: #72879f;
+  padding: 8px 10px;
+  font-size: 9px;
+}
+.run-source-stats strong {
+  color: #9db6d1;
+  font-size: 11px;
+}
 .log-line {
   display: flex;
   gap: 12px;
@@ -2502,6 +2519,9 @@ h1 {
   }
   .run-detail {
     padding: 15px;
+  }
+  .run-source-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .log-line {
     flex-wrap: wrap;

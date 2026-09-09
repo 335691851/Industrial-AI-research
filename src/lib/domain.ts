@@ -114,7 +114,23 @@ export type Run = {
     status: "ok" | "warning" | "error";
   }[];
   itemCount: number;
+  sourceStats?: {
+    queryCount: number;
+    searchResults: number;
+    deduplicated: number;
+    read: number;
+    effective: number;
+    failed: number;
+    analyzed: number;
+  };
   error?: string;
+};
+export type ResearchArchive = {
+  id: string;
+  archivedAt: string;
+  runId: string;
+  items: Item[];
+  profiles: Profile[];
 };
 export type Database = {
   settings: Settings;
@@ -122,6 +138,7 @@ export type Database = {
   items: Item[];
   profiles: Profile[];
   runs: Run[];
+  archives?: ResearchArchive[];
 };
 export type Dashboard = {
   items: Item[];

@@ -377,11 +377,11 @@ export function Workspace() {
               </button>
               <button
                 className="button primary"
-                onClick={() => void run("incremental")}
+                onClick={() => void run("full")}
                 disabled={running || active || !data?.editable}
               >
                 <Sparkles size={16} />
-                {active ? "研究进行中" : "开始研究"}
+                {active ? "研究进行中" : "全量重研"}
                 <ArrowUpRight size={16} />
               </button>
             </div>

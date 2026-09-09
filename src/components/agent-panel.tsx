@@ -6,7 +6,6 @@ import {
   ChevronDown,
   Clock3,
   KeyRound,
-  Play,
   RefreshCw,
   Save,
   ShieldCheck,
@@ -102,12 +101,12 @@ export function AgentPanel({
           <span className="subtle">端到端可追溯</span>
         </div>
         <div className="pipeline">
-          {["研究规划", "来源采集", "结构化分析", "证据校验", "融合发布"].map(
+          {["自主规划", "来源采集", "覆盖检查", "补充搜索", "结构化分析", "证据校验", "融合发布"].map(
             (s, i) => (
               <div key={s}>
                 <span>0{i + 1}</span>
                 <strong>{s}</strong>
-                {i < 4 && <span className="pipeline-arrow">→</span>}
+                {i < 6 && <span className="pipeline-arrow">→</span>}
               </div>
             ),
           )}
@@ -241,14 +240,6 @@ export function AgentPanel({
             <RefreshCw size={15} />
             全量重研
           </button>
-          <button
-            className="button secondary"
-            disabled={busy || !data.editable}
-            onClick={() => void run("incremental")}
-          >
-            <Play size={15} />
-            增量研究
-          </button>
         </div>
       </div>
       <section className="panel run-list">
@@ -293,6 +284,16 @@ export function AgentPanel({
               {expanded === r.id && (
                 <div className="run-detail">
                   <div className="run-id">RUN / {r.id}</div>
+                  {r.sourceStats && (
+                    <div className="run-source-stats">
+                      <span>搜索范围 <strong>{r.sourceStats.queryCount}</strong> 个问题</span>
+                      <span>搜索结果 <strong>{r.sourceStats.searchResults}</strong> 条</span>
+                      <span>去重后 <strong>{r.sourceStats.deduplicated}</strong> 条</span>
+                      <span>读取正文 <strong>{r.sourceStats.read}</strong> 份</span>
+                      <span>有效内容 <strong>{r.sourceStats.effective}</strong> 份</span>
+                      <span>进入分析 <strong>{r.sourceStats.analyzed}</strong> 份</span>
+                    </div>
+                  )}
                   {r.events.map((event, i) => (
                     <div className={`log-line ${event.status}`} key={i}>
                       <span className="log-dot" />
@@ -330,7 +331,7 @@ export function AgentPanel({
             <h3>第一份洞察，从一次研究开始</h3>
             <p>保存模型密钥后发起研究，过程与结果将在这里记录。</p>
             <small>
-              全量重研扩展采集深度；增量研究融合新发现。两者均保留历史知识。
+              手动全量重研覆盖最近一年；每日增量研究由系统在 19:00 自动执行。
             </small>
           </div>
         )}

@@ -46,7 +46,13 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
           },
         ];
       },
-      discover: async () => [],
+      discover: async () => ({
+        candidates: [],
+        queryCount: 0,
+        resultCount: 0,
+        deduplicatedCount: 0,
+        failedQueries: 0,
+      }),
       complete: async () => {
         throw new Error("测试模型暂不可用。");
       },
@@ -78,7 +84,11 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
     const state = await readDatabase();
     assert.equal(calls, 1, "completed collection must not rerun after restore");
     assert.equal(state.items.length, 1);
-    assert.equal(state.runs[0].status, "completed");
+    assert.equal(
+      state.runs[0].status,
+      "partial",
+      "a run recovered with deterministic planning remains transparently partial",
+    );
     assert.ok(state.runs[0].events.some((e) => e.node === "融合发布"));
     const safe = JSON.stringify(await dashboard());
     assert.equal(safe.includes("test-not-a-real-api-key"), false);

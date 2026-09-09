@@ -87,5 +87,6 @@ export function emptyDatabase(): Database {
     items: [],
     profiles: [],
     runs: [],
+    archives: [],
   };
 }
