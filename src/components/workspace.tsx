@@ -37,10 +37,12 @@ import {
   topics,
   categories,
   prioritySignals,
+  effectiveDate,
+  validDate,
 } from "@/lib/domain";
 import { SourceSettings } from "./source-settings";
 import { AgentPanel } from "./agent-panel";
-import { FieldTrend, HotKeywords, IndustryTrend } from "./charts";
+import { ResearchInsights } from "./charts";
 import { PriorityCarousel } from "./priority-carousel";
 import { Detail } from "./detail";
 
@@ -200,9 +202,7 @@ export function Workspace() {
       sort === "importance"
         ? { critical: 0, high: 1, normal: 2 }[a.importance] -
           { critical: 0, high: 1, normal: 2 }[b.importance]
-        : (b.publishedAt ?? b.observedAt).localeCompare(
-            a.publishedAt ?? a.observedAt,
-          ),
+        : Date.parse(effectiveDate(b)) - Date.parse(effectiveDate(a)),
     );
   const highlights = prioritySignals(items);
   const visibleCategories = categories.filter((value) =>
@@ -487,37 +487,14 @@ export function Workspace() {
                     </div>
                     <PriorityCarousel items={highlights} onSelect={setDetail} />
                   </section>
-                  <div className="analytics-grid trend-analytics">
-                    <section className="panel">
-                      <div className="panel-heading">
-                        <h2>
-                          <TrendingUp size={17} />
-                          行业趋势
-                        </h2>
-                        <span className="subtle">近 30 天 · 信号强度</span>
-                      </div>
-                      <IndustryTrend items={items} />
-                    </section>
-                    <section className="panel">
-                      <div className="panel-heading">
-                        <h2>
-                          <Boxes size={17} />
-                          热点热词
-                        </h2>
-                        <span className="subtle">从当前语料动态提取</span>
-                      </div>
-                      <HotKeywords items={items} keywords={data.settings.keywords} onSelect={setQuery} />
-                    </section>
-                    <section className="panel">
-                      <div className="panel-heading">
-                        <h2><Activity size={17} />领域趋势</h2>
-                        <span className="subtle">7 天动量</span>
-                      </div>
-                      <FieldTrend items={items} onTopic={setTopic} />
-                    </section>
-                  </div>
+                  <ResearchInsights items={items} onSelect={setDetail} onFilter={(selectedTopic, selectedCategory) => {
+                    setTopic(selectedTopic ?? "全部领域");
+                    setCategory(selectedCategory ?? "全部情报");
+                    setQuery("");
+                    document.getElementById("intelligence-feed")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
+                  }} />
                   <div className="content-grid">
-                    <section className="feed-section">
+                    <section className="feed-section" id="intelligence-feed">
                       <div className="section-heading">
                         <h2>
                           情报动态
@@ -589,14 +566,8 @@ export function Workspace() {
                                 </span>
                                 <span>{item.company}</span>
                                 <span className="feed-date">
-                                  {item.publishedAt
-                                    ? new Date(
-                                        item.publishedAt,
-                                      ).toLocaleDateString("zh-CN", {
-                                        month: "2-digit",
-                                        day: "2-digit",
-                                      })
-                                    : "日期待核实"}
+                                  {new Date(effectiveDate(item)).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", timeZone: "Asia/Shanghai" })}
+                                  {!validDate(item.publishedAt) && " · 收录日"}
                                 </span>
                               </div>
                               <h3>

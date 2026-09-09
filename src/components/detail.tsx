@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { X, ArrowUpRight, ExternalLink, Building2 } from "lucide-react";
-import { Item, Profile } from "@/lib/domain";
+import { Item, Profile, effectiveDate, validDate } from "@/lib/domain";
 
 export function Detail({
   value,
@@ -41,12 +41,11 @@ export function Detail({
               <span className="tag">{item.category}</span>
               <span>{item.topic}</span>
               <span>
-                {item.publishedAt
-                  ? new Date(item.publishedAt).toLocaleDateString("zh-CN")
-                  : "原文日期未知"}
+                {new Date(effectiveDate(item)).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })} · {validDate(item.publishedAt) ? "原文发布日期" : "首次收录日期"}
               </span>
             </div>
             <h3>核心事实</h3>
+            {!validDate(item.publishedAt) && <p className="muted">原文未披露可核验日期，按首次生成／收录日计算 30 天展示期限；重新发现不会延长保留时间。</p>}
             <p>{item.summary}</p>
             <h3>研究置信度</h3>
             <p>

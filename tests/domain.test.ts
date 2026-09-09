@@ -10,6 +10,8 @@ import {
   discover,
 } from "../src/server/collector";
 import { defaultSettings } from "../src/lib/seed";
+import { normalizeItemDate, effectiveDate, rebuildItems } from "../src/lib/domain";
+import { researchAnalysis } from "../src/lib/analysis";
 import { dashboardProfiles } from "../src/server/store";
 import { emptyDatabase } from "../src/lib/seed";
 import {
@@ -64,7 +66,7 @@ test("all intelligence uses a unified rolling 30-day effective window", () => {
     recentIntelligence({ ...base, publishedAt: "2026-08-09T11:00:00Z" }, now),
     true,
   );
-  for (const date of ["invalid", "2026-08-09T10:59:59Z", "2026-09-09T11:00:00Z"])
+  for (const date of ["2026-08-09T10:59:59Z", "2026-09-09T11:00:00Z"])
     assert.equal(recentIntelligence({ ...base, publishedAt: date }, now), false);
   assert.equal(
     recentIntelligence({ ...base, publishedAt: null }, now),
@@ -91,6 +93,45 @@ test("Sony Aramco bilingual headlines collapse across event keys and categories"
   const unrelated = { ...items[0], id: "different", eventKey: "different", title: "索尼发布新一代图像传感器", summary: "索尼发布新一代图像传感器，提升像素和成像性能。", evidence: [{ ...items[0].evidence[0], quote: "新的独立产品发布事件，与签署协议不同。" }] };
   assert.equal(mergeItems(items, [unrelated]).length, 2);
   assert.equal(mergeItems([items[0]], [{ ...items[0], id: "later", eventKey: "later", publishedAt: "2026-10-09T00:00:00Z" }]).length, 2);
+});
+
+test("missing and malformed publication dates expire by first generation, including full rebuilds", () => {
+  const now = new Date("2026-09-09T12:00:00Z");
+  const old = normalizeItemDate({ ...baseItem(), publishedAt: null, observedAt: "2026-08-01T00:00:00Z" });
+  const incoming = normalizeItemDate({ ...old, effectiveAt: undefined, observedAt: now.toISOString() });
+  assert.equal(old.dateBasis, "observed");
+  assert.equal(recentIntelligence(old, now), false);
+  assert.equal(rebuildItems([old], [incoming], now).length, 0);
+  assert.equal(Date.parse(effectiveDate(mergeItems([old], [incoming])[0])), Date.parse(old.observedAt));
+  const fresh = normalizeItemDate({ ...baseItem(), publishedAt: "invalid" });
+  assert.equal(fresh.publishedAt, null);
+  assert.equal(Date.parse(effectiveDate(fresh)), Date.parse(fresh.observedAt));
+  assert.equal(recentIntelligence(fresh, now), true);
+  const noDate = normalizeItemDate({ ...baseItem(), publishedAt: null, observedAt: "" }, "2026-08-01T00:00:00Z");
+  assert.equal(recentIntelligence(noDate, now), false);
+  const evidence = [{ url: "https://example.com/old", title: "原文", quote: "这是同一个历史工业产品发布事件的完整原文引用证据内容" }];
+  assert.equal(rebuildItems([{ ...old, evidence }], [{ ...incoming, evidence, eventKey: "rediscovered-key" }], now).length, 0);
+});
+
+test("analysis compares equal periods and never treats generated dates as industry acceleration", () => {
+  const now = new Date("2026-09-09T12:00:00Z");
+  const events = [
+    { ...baseItem(), publishedAt: "2026-09-08T00:00:00Z" },
+    { ...baseItem(), publishedAt: "2026-09-02T12:00:00Z" },
+    { ...baseItem(), publishedAt: null },
+    { ...baseItem(), publishedAt: "2026-07-01T00:00:00Z" },
+  ];
+  const report = researchAnalysis(events, 7, now);
+  assert.equal(report.total, 3);
+  assert.equal(report.current, 1);
+  assert.equal(report.previous, 1);
+  assert.equal(report.fallback, 1);
+  assert.equal(report.movement[0].delta, 0);
+  assert.equal(report.actions[0].count, 3);
+  const noHistory = researchAnalysis([events[0]], 7, now);
+  assert.equal(noHistory.previous, 0);
+  assert.equal(noHistory.movement[0].earlier, 0);
+  assert.equal(researchAnalysis([], 7, now).total, 0);
 });
 
 test("company archives outlive news window and failed refresh cannot erase them", () => {

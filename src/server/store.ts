@@ -11,6 +11,7 @@ import {
   recentIntelligence,
   mergeItems,
   mergeProfiles,
+  normalizeItemDate,
 } from "@/lib/domain";
 import { identityText } from "@/lib/identity";
 import { emptyDatabase } from "@/lib/seed";
@@ -39,7 +40,8 @@ function localAllowed() {
 function removeLegacyDemoContent(db: Database): Database {
   const items = db.items
     .filter((item) => (item as Item & { demo?: unknown }).demo !== true)
-    .map((item) => ({ ...item, category: normalizeCategory(String(item.category)) }));
+    .map((item) => normalizeItemDate({ ...item, category: normalizeCategory(String(item.category)) },
+      db.runs.find((run) => run.id === item.runId)?.startedAt));
   const profiles = db.profiles.filter(
     (profile) => (profile as Profile & { demo?: unknown }).demo !== true,
   );
@@ -207,7 +209,7 @@ export async function dashboard(editable = false): Promise<Dashboard> {
     configured: Object.fromEntries(
       Object.entries(db.credentials).map(([k, v]) => [k, Boolean(v)]),
     ),
-    items: mergeItems([], db.items.filter((i) => recentIntelligence(i))),
+    items: mergeItems([], db.items).filter((i) => recentIntelligence(i)),
     profiles: dashboardProfiles(db),
     runs: db.runs.slice(-40).reverse(),
     storage: isCloud() ? "supabase" : "local",

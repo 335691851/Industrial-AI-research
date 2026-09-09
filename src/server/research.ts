@@ -10,6 +10,8 @@ import {
   Settings,
   mergeItems,
   mergeProfiles,
+  normalizeItemDate,
+  rebuildItems,
   recentIntelligence,
   INTELLIGENCE_WINDOW_DAYS,
 } from "@/lib/domain";
@@ -411,7 +413,7 @@ export function groundExtraction(
       ? i.eventKey
       : `evt-${hash(norm(i.company) + ":" + norm(i.eventKey))}`;
     return [
-      {
+      normalizeItemDate({
         ...i,
         id: eventKey,
         eventKey,
@@ -419,7 +421,7 @@ export function groundExtraction(
         runId,
         publishedAt: dates[0] ?? null,
         observedAt,
-      },
+      }),
     ];
   });
   const profiles: Profile[] = output.profiles.flatMap((p) => {
@@ -1015,9 +1017,7 @@ export async function executeRun(
               });
               current.archives = current.archives.slice(-12);
             }
-            current.items = mergeItems([], state.items).filter((item) =>
-              recentIntelligence(item, now),
-            );
+            current.items = rebuildItems(current.items, state.items, now);
             current.profiles = refreshProfiles(
               mergeProfiles(current.profiles, state.profiles),
               current.settings.companies,

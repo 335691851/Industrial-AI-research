@@ -113,6 +113,8 @@ export type Item = {
   importance: "critical" | "high" | "normal";
   company: string;
   publishedAt: string | null;
+  effectiveAt?: string;
+  dateBasis?: "published" | "observed";
   observedAt: string;
   confidence: number;
   evidence: Evidence[];
@@ -186,6 +188,21 @@ export type Dashboard = {
 
 export const INTELLIGENCE_WINDOW_DAYS = 30;
 
+export function validDate(value: string | null | undefined) {
+  return Boolean(value && Number.isFinite(Date.parse(value)));
+}
+export function effectiveDate(item: Item) {
+  return validDate(item.publishedAt) ? item.publishedAt! :
+    validDate(item.effectiveAt) ? item.effectiveAt! : item.observedAt;
+}
+export function normalizeItemDate(item: Item, generatedAt = new Date().toISOString()): Item {
+  const publishedAt = validDate(item.publishedAt) ? item.publishedAt! : null;
+  const observedAt = validDate(item.observedAt) ? new Date(item.observedAt).toISOString() : generatedAt;
+  const fallback = validDate(item.effectiveAt) ? new Date(item.effectiveAt!).toISOString() : observedAt;
+  return { ...item, publishedAt, observedAt, effectiveAt: publishedAt ?? fallback,
+    dateBasis: publishedAt ? "published" : "observed" };
+}
+
 const legacyCategories: Record<string, Item["category"]> = {
   前沿研究: "技术前沿",
   重大成果: "技术前沿",
@@ -202,7 +219,7 @@ export function normalizeCategory(value: string): Item["category"] {
 }
 
 export function recentIntelligence(item: Item, now = new Date()) {
-  const date = Date.parse(item.publishedAt ?? item.observedAt);
+  const date = Date.parse(effectiveDate(item));
   return (
     Number.isFinite(date) &&
     date <= now.getTime() &&
@@ -217,7 +234,7 @@ export function priorityScore(item: Item, now = new Date()) {
   const importance = { critical: 42, high: 24, normal: 0 }[item.importance];
   const evidence = Math.min(new Set(item.evidence.map((e) => evidenceUrl(e.url))).size, 4) * 6;
   const confidence = Math.round(item.confidence * 20);
-  const date = Date.parse(item.publishedAt ?? item.observedAt);
+  const date = Date.parse(effectiveDate(item));
   const ageDays = Number.isFinite(date)
     ? Math.max(0, (now.getTime() - date) / 86400000)
     : INTELLIGENCE_WINDOW_DAYS;
@@ -247,15 +264,16 @@ export function mergeItems(existing: Item[], incoming: Item[]) {
           all.findIndex((a) => evidenceUrl(a.url) === evidenceUrl(e.url) && a.quote === e.quote) === i,
       );
       // Do not re-date an event just because it was rediscovered.
-      map.set(prior.eventKey, {
+      map.set(prior.eventKey, normalizeItemDate({
         ...(item.confidence > prior.confidence ? item : prior),
         id: prior.id,
         eventKey: prior.eventKey,
         observedAt: prior.observedAt < item.observedAt ? prior.observedAt : item.observedAt,
+        effectiveAt: effectiveDate(prior),
         publishedAt: prior.publishedAt ?? item.publishedAt,
         evidence,
-      });
-    } else map.set(item.eventKey, item);
+      }));
+    } else map.set(item.eventKey, normalizeItemDate(item));
   }
   return [...map.values()].sort((a, b) =>
     b.observedAt.localeCompare(a.observedAt),
@@ -296,17 +314,26 @@ export function sameEvent(a: Item, b: Item) {
   if (companyA && companyB && companyA !== "行业" && companyB !== "行业" && companyA !== companyB &&
     !identityText(`${a.title} ${a.summary}`).includes(companyB) &&
     !identityText(`${b.title} ${b.summary}`).includes(companyA)) return false;
-  const dateA = Date.parse(a.publishedAt ?? a.observedAt);
-  const dateB = Date.parse(b.publishedAt ?? b.observedAt);
-  if (!Number.isFinite(dateA) || !Number.isFinite(dateB) || Math.abs(dateA - dateB) > 7 * 86400000) return false;
+  const dateA = Date.parse(effectiveDate(a));
+  const dateB = Date.parse(effectiveDate(b));
+  const datedApart = Math.abs(dateA - dateB) > 7 * 86400000;
+  if (!Number.isFinite(dateA) || !Number.isFinite(dateB)) return false;
   const titleSimilarity = textSimilarity(a.title, b.title);
   const summarySimilarity = textSimilarity(a.summary, b.summary);
   const sharedQuote = a.evidence.some((left) => b.evidence.some((right) =>
     identityText(left.quote).length >= 24 && textSimilarity(left.quote, right.quote) >= .85));
   const sharedPage = a.evidence.some((left) => b.evidence.some((right) => evidenceUrl(left.url) === evidenceUrl(right.url)));
+  // Undated rediscoveries may be weeks apart; require the same page AND quotation.
+  if (datedApart && (validDate(a.publishedAt) && validDate(b.publishedAt) || !sharedPage || !sharedQuote)) return false;
   // A page can cover many events: sharing a URL alone never merges them.
   return titleSimilarity >= .82 || summarySimilarity >= .8 ||
     (titleSimilarity >= .48 && summarySimilarity >= .5) ||
     (sharedQuote && (titleSimilarity >= .28 || summarySimilarity >= .35)) ||
     (sharedPage && titleSimilarity >= .52);
+}
+
+export function rebuildItems(existing: Item[], incoming: Item[], now = new Date()) {
+  // Full research replaces coverage, but rediscovery must not restart the retention clock.
+  const matched = existing.filter((old) => incoming.some((item) => old.eventKey === item.eventKey || sameEvent(old, item)));
+  return mergeItems(matched, incoming).filter((item) => recentIntelligence(item, now));
 }
