@@ -9,7 +9,7 @@ export async function POST(request: Request) {
     requireWrite(request);
     const body = z
       .object({
-        mode: z.enum(["incremental", "full"]).default("incremental"),
+        mode: z.enum(["incremental", "full"]).default("full"),
         resumeId: z
           .string()
           .max(100)
@@ -17,6 +17,8 @@ export async function POST(request: Request) {
           .optional(),
       })
       .parse(await request.json());
+    if (body.mode === "incremental" && !body.resumeId)
+      throw new Error("每日增量研究仅由 19:00 定时任务启动。");
     const run = await startRun(body.mode, false, body.resumeId);
     after(async () => {
       await executeRun(run.id, run.resume);
