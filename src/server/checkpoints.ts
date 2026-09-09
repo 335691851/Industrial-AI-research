@@ -93,7 +93,7 @@ export function checkpointError(error: unknown) {
       ].includes(code),
     )
   )
-    return "DATABASE_URL 的 TLS 证书校验失败，请确认使用 Supabase 官方 Shared Pooler 主机并设置 sslmode=verify-full。";
+    return "DATABASE_URL 的 TLS 证书校验失败。请为 verify-full 安装 Supabase CA，或在 Vercel 明确使用 uselibpqcompat=true&sslmode=require。";
   const safeCode = codes.find((code) => /^[A-Z0-9_]{2,32}$/i.test(code));
   return `LangGraph 持久化连接失败${safeCode ? `（错误代码：${safeCode}）` : ""}，请检查 DATABASE_URL 是否为 Supabase Session pooler（5432）连接串。`;
 }
@@ -103,7 +103,8 @@ export function checkpointConnection(value: string) {
     const url = new URL(value);
     // pg currently treats `require` as verify-full and emits a runtime warning.
     // Make the intended, stronger behavior explicit without changing the secret.
-    if (url.searchParams.get("sslmode") === "require")
+    const libpqCompat = url.searchParams.get("uselibpqcompat") === "true";
+    if (url.searchParams.get("sslmode") === "require" && !libpqCompat)
       url.searchParams.set("sslmode", "verify-full");
     return {
       connectionString: url.toString(),
@@ -112,6 +113,7 @@ export function checkpointConnection(value: string) {
         port: url.port || "5432",
         database: url.pathname.replace(/^\//, "") || "postgres",
         sslmode: url.searchParams.get("sslmode") || "unset",
+        certificateVerification: libpqCompat ? "libpq-require" : "full",
       },
     };
   } catch {
@@ -122,6 +124,7 @@ export function checkpointConnection(value: string) {
         port: "unset",
         database: "unset",
         sslmode: "unset",
+        certificateVerification: "unset",
       },
     };
   }

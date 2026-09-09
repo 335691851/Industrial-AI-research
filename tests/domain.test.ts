@@ -315,4 +315,13 @@ test(
     assert.equal(JSON.stringify(connection.target).includes("secret"), false);
   },
 );
+test("checkpoint connection respects an explicit libpq TLS compatibility choice", () => {
+  const connection = checkpointConnection(
+    "postgresql://user:secret@aws-0-us-west-2.pooler.supabase.com:5432/postgres?uselibpqcompat=true&sslmode=require",
+  );
+  assert.equal(connection.target.sslmode, "require");
+  assert.equal(connection.target.certificateVerification, "libpq-require");
+  assert.match(connection.connectionString, /uselibpqcompat=true/);
+  assert.match(connection.connectionString, /sslmode=require/);
+});
 
