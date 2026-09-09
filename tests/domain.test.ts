@@ -20,7 +20,10 @@ import {
   publicError,
   requireWrite,
 } from "../src/server/security";
-import { checkpointError } from "../src/server/checkpoints";
+import {
+  checkpointConnection,
+  checkpointError,
+} from "../src/server/checkpoints";
 
 const baseItem = () => ({
   id: "item-1",
@@ -287,4 +290,29 @@ test("checkpoint errors identify connection, credential and permission failures"
     checkpointError(Object.assign(new Error("network"), { code: "ENOTFOUND" })),
     /Shared Pooler/,
   );
+  assert.match(
+    checkpointError(
+      Object.assign(new Error("network"), { code: "ECONNRESET" }),
+    ),
+    /Shared Pooler/,
+  );
+  assert.match(
+    checkpointError(Object.assign(new Error("other"), { code: "XX000" })),
+    /XX000/,
+  );
 });
+test(
+  "checkpoint connection makes strict TLS explicit without exposing it in diagnostics",
+  () => {
+    const connection = checkpointConnection(
+      "postgresql://user:secret@aws-0-us-west-2.pooler.supabase.com:5432/postgres?sslmode=require",
+    );
+    assert.equal(connection.target.host, "aws-0-us-west-2.pooler.supabase.com");
+    assert.equal(connection.target.port, "5432");
+    assert.equal(connection.target.database, "postgres");
+    assert.equal(connection.target.sslmode, "verify-full");
+    assert.match(connection.connectionString, /sslmode=verify-full/);
+    assert.equal(JSON.stringify(connection.target).includes("secret"), false);
+  },
+);
+
