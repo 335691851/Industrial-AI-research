@@ -20,6 +20,7 @@ import {
   publicError,
   requireWrite,
 } from "../src/server/security";
+import { checkpointError } from "../src/server/checkpoints";
 
 const baseItem = () => ({
   id: "item-1",
@@ -271,5 +272,19 @@ test("writes reject cross-site requests and production defaults to read-only", (
   assert.equal(
     publicError(new Error("sk-do-not-expose")),
     "操作未完成，请检查服务配置或稍后重试。敏感错误内容已隐藏。",
+  );
+});
+test("checkpoint errors identify connection, credential and permission failures", () => {
+  assert.match(
+    checkpointError(Object.assign(new Error("auth"), { code: "28P01" })),
+    /认证失败/,
+  );
+  assert.match(
+    checkpointError(Object.assign(new Error("denied"), { code: "42501" })),
+    /无权访问/,
+  );
+  assert.match(
+    checkpointError(Object.assign(new Error("network"), { code: "ENOTFOUND" })),
+    /Shared Pooler/,
   );
 });

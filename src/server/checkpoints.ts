@@ -41,6 +41,44 @@ class FileSaver extends MemorySaver {
     await this.persist();
   }
 }
+
+export function checkpointError(error: unknown) {
+  const codes: string[] = [];
+  const messages: string[] = [];
+  let current: unknown = error;
+  for (
+    let depth = 0;
+    current && typeof current === "object" && depth < 5;
+    depth++
+  ) {
+    const detail = current as {
+      code?: unknown;
+      message?: unknown;
+      cause?: unknown;
+    };
+    if (typeof detail.code === "string") codes.push(detail.code);
+    if (typeof detail.message === "string") messages.push(detail.message);
+    current = detail.cause;
+  }
+  const message = messages.join(" ");
+  if (
+    codes.includes("28P01") ||
+    /password authentication failed|Tenant or user not found/i.test(message)
+  )
+    return "DATABASE_URL 认证失败。请重新复制 Supabase Session pooler 连接串，并确认数据库密码已正确进行 URL 编码。";
+  if (codes.includes("42501") || /permission denied/i.test(message))
+    return "DATABASE_URL 已连接，但连接角色无权访问 research_checkpoints schema。";
+  if (codes.includes("3D000"))
+    return "DATABASE_URL 指向的数据库不存在，请确认连接串末尾为 /postgres。";
+  if (
+    codes.some((code) =>
+      ["ENOTFOUND", "EAI_AGAIN", "ECONNREFUSED", "ETIMEDOUT"].includes(code),
+    )
+  )
+    return "DATABASE_URL 无法连接。Vercel 请使用 Supabase Shared Pooler 地址，不要使用仅支持 IPv6 的直连地址。";
+  return "LangGraph 持久化连接失败，请检查 DATABASE_URL 是否为 Supabase Session pooler（5432）连接串。";
+}
+
 export async function checkpointer(runId: string) {
   if (process.env.DATABASE_URL) {
     const saver = PostgresSaver.fromConnString(process.env.DATABASE_URL, {
@@ -48,11 +86,9 @@ export async function checkpointer(runId: string) {
     });
     try {
       await saver.setup();
-    } catch {
+    } catch (error) {
       await saver.end();
-      throw new Error(
-        "LangGraph 持久化连接失败，请检查 DATABASE_URL 与私有 schema 权限。",
-      );
+      throw new Error(checkpointError(error));
     }
     return { saver, close: () => saver.end() };
   }
