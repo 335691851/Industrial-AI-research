@@ -23,8 +23,7 @@ import {
   DiscoveryQuery,
   DiscoveryResult,
   Document,
-  fetchPage,
-  parsePage,
+  readSourcePage,
 } from "./collector";
 import { complete } from "./model";
 import { checkpointer } from "./checkpoints";
@@ -366,12 +365,11 @@ async function readDiscovered(
     const group = candidates.slice(index, index + 6);
     const settled = await Promise.allSettled(
       group.map(async (candidate) => {
-        const page = await fetchPage(candidate.url, signal);
-        const document = parsePage(
-          page.html,
-          page.url,
+        const document = (await readSourcePage(
+          candidate.url,
           `${candidate.lane} · ${candidate.coverageKey}`,
-        ).document;
+          signal,
+        )).document;
         return document;
       }),
     );
@@ -628,7 +626,8 @@ export async function executeRun(
               const accepted = pages.filter((page) => belongsToWebsite(page.url, website)).slice(0, 2);
               docs.push(...accepted.map((page) => ({ ...page, source: `企业官网 · ${name}`, profileCompany: name })));
               stats.read += pages.length;
-              await log(id, "企业官网研究", `${name}：读取 ${pages.length} 份官网资料，接纳 ${accepted.length} 份；不受新闻 30 天窗口限制。`, accepted.length ? "ok" : "warning");
+              const dynamicCount = accepted.filter((page) => page.retrievalMethod === "advanced-extract").length;
+              await log(id, "企业官网研究", `${name}：读取 ${pages.length} 份官网资料，接纳 ${accepted.length} 份${dynamicCount ? `（高级动态正文提取 ${dynamicCount} 份）` : ""}；不受新闻 30 天窗口限制。`, accepted.length ? "ok" : "warning");
             } catch (error) {
               stats.failed++;
               await log(id, "企业官网研究", `${name}：${publicError(error)}，保留已有有效画像。`, "warning");

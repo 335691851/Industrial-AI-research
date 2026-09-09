@@ -4,7 +4,7 @@ import ipaddr from "ipaddr.js";
 import { Agent, fetch as secureFetch } from "undici";
 import * as cheerio from "cheerio";
 import { Run, Source, Settings, topics } from "@/lib/domain";
-import { belongsToWebsite } from "@/lib/identity";
+import { belongsToWebsite, normalizePageFragment } from "@/lib/identity";
 
 export type Document = {
   url: string;
@@ -13,7 +13,14 @@ export type Document = {
   publishedAt: string | null;
   source: string;
   profileCompany?: string;
+  retrievalMethod?: "html" | "advanced-extract";
 };
+export class SourceContentError extends Error {
+  constructor(public readonly reason: "dynamic" | "empty" | "restricted", message: string) {
+    super(message);
+    this.name = "SourceContentError";
+  }
+}
 export function publicAddress(address: string) {
   try {
     const ip = ipaddr.process(address);
@@ -43,7 +50,7 @@ export function validateUrl(value: string) {
 }
 export function canonicalUrl(value: string) {
   const url = validateUrl(value);
-  url.hash = "";
+  normalizePageFragment(url);
   for (const key of [...url.searchParams.keys()])
     if (/^utm_|^(fbclid|gclid)$/i.test(key)) url.searchParams.delete(key);
   url.searchParams.sort();
@@ -85,7 +92,9 @@ export async function fetchPage(
         const target = response.headers.get("location");
         await response.body?.cancel();
         if (!target) throw new Error("来源重定向缺少目标。");
-        url = validateUrl(new URL(target, url).toString());
+        const redirected = new URL(target, url);
+        if (!target.includes("#")) redirected.hash = url.hash;
+        url = validateUrl(redirected.toString());
         continue;
       }
       if (!response.ok) {
@@ -159,7 +168,7 @@ export function parsePage(
       if (
         target.hostname === new URL(url).hostname &&
         /about|company|capabilit|technolog|news|blog|press|article|release|research|product|solution|\/s\?/i.test(
-          target.pathname + target.search,
+          target.pathname + target.search + target.hash,
         )
       )
         links.push(canonicalUrl(target.toString()));
@@ -171,17 +180,19 @@ export function parsePage(
     $('meta[property="og:title"]').attr("content") ||
     $("h1").first().text() ||
     $("title").text();
+  const dynamicShell = /enable javascript|javascript (?:is )?(?:required|disabled)|without javascript|启用\s*javascript/i.test($("noscript").text()) ||
+    ($("script[src]").length > 0 && $("#app,#__next,#root").length > 0);
   $("script,style,noscript,nav,footer,header,form,svg").remove();
   const article = $("article,main,#js_content").first();
   const text = (article.length ? article.text() : $("body").text())
     .replace(/\s+/g, " ")
     .trim()
     .slice(0, 10000);
-  if (
-    text.length < 120 ||
-    /环境异常|访问过于频繁|完成验证/.test(text.slice(0, 500))
-  )
-    throw new Error("来源正文不可访问或需要平台验证，未绕过访问限制。");
+  assertNotRestricted(`${title} ${text}`);
+  if (text.length < 120) {
+    if (dynamicShell) throw new SourceContentError("dynamic", "来源为 JavaScript 动态页面，原始 HTML 未包含有效正文。");
+    throw new SourceContentError("empty", "来源正文不足 120 字符，可能为空页或非正文页面。");
+  }
   return {
     document: {
       url,
@@ -189,9 +200,74 @@ export function parsePage(
       text,
       publishedAt,
       source,
+      retrievalMethod: "html",
     },
     links: [...new Set(links)].filter((l) => l !== url),
   };
+}
+
+function assertNotRestricted(text: string) {
+  if (/环境异常|访问过于频繁|完成验证|verify (?:you are|that you are) human|captcha|access denied|just a moment/i.test(text.slice(0, 500)))
+    throw new SourceContentError("restricted", "来源要求访问验证或明确限制访问，已停止读取，未绕过访问限制。");
+}
+
+// Only called after the URL has passed the pinned-DNS fetch and returned a public page.
+export async function extractDynamicPage(page: { html: string; url: string }, source: string, signal: AbortSignal): Promise<Document> {
+  signal.throwIfAborted();
+  const target = canonicalUrl(page.url);
+  if (!process.env.TAVILY_API_KEY)
+    throw new SourceContentError("dynamic", "来源为 JavaScript 动态页面；请配置 TAVILY_API_KEY 以启用高级正文提取。");
+  const response = await fetch("https://api.tavily.com/extract", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.TAVILY_API_KEY}` },
+    body: JSON.stringify({ urls: [target], extract_depth: "advanced", format: "text", timeout: 20, include_images: false }),
+    signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new Error(`动态正文提取服务返回 HTTP ${response.status}，请检查提取服务配置或额度。`);
+  }
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("动态正文提取服务未返回内容。");
+  const chunks: Uint8Array[] = [];
+  let size = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    if (size > 1800000) { await reader.cancel(); throw new Error("动态正文提取响应过大，已跳过。"); }
+    chunks.push(value);
+  }
+  const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { results?: { url?: unknown; raw_content?: unknown }[] };
+  const result = Array.isArray(body.results) ? body.results.find((entry) => {
+    if (typeof entry.url !== "string") return false;
+    try { return canonicalUrl(entry.url) === target; } catch { return false; }
+  }) : undefined;
+  if (!result) throw new Error("动态正文提取未返回对应页面；未将其他页面或首页内容作为该页面证据。");
+  const text = typeof result.raw_content === "string" ? result.raw_content.replace(/\s+/g, " ").trim().slice(0, 10000) : "";
+  assertNotRestricted(text);
+  if (text.length < 120 || /without javascript|please enable javascript/i.test(text.slice(0, 500)))
+    throw new Error("动态页面高级提取仍未取得有效正文，保留已有资料并等待后续刷新。");
+  const $ = cheerio.load(page.html);
+  return { url: target, title: ($('meta[property="og:title"]').attr("content") || $("title").text() || source).trim().slice(0, 300), text, publishedAt: null, source, retrievalMethod: "advanced-extract" };
+}
+
+export async function readSourcePage(value: string, source: string, signal: AbortSignal, officialWebsite?: string) {
+  const page = await fetchPage(value, signal);
+  if (officialWebsite && !belongsToWebsite(page.url, officialWebsite))
+    throw new Error("企业官网跳转到其他域名，请核对官网地址。");
+  return parseSourcePage(page, source, signal);
+}
+
+export async function parseSourcePage(page: { html: string; url: string }, source: string, signal: AbortSignal) {
+  let parsed: ReturnType<typeof parsePage> | undefined;
+  try { parsed = parsePage(page.html, page.url, source); }
+  catch (error) {
+    if (!(error instanceof SourceContentError) || error.reason !== "dynamic") throw error;
+  }
+  // Even a populated HTML shell cannot prove the requested client-side route was rendered.
+  if (parsed && !/^#!?\//.test(new URL(page.url).hash)) return parsed;
+  return { document: await extractDynamicPage(page, source, signal), links: parsed?.links ?? [] };
 }
 export async function collectSource(
   source: Source,
@@ -230,19 +306,17 @@ export async function collectSource(
     if (!docs.length) throw new Error("RSS 未解析到有效条目。");
     return docs;
   }
-  const parsed = parsePage(page.html, page.url, source.name);
-  const docs = [parsed.document];
   const official = source.id.startsWith("official-company:");
   if (official && !belongsToWebsite(page.url, source.url))
     throw new Error("企业官网跳转到其他域名，请核对官网地址。");
+  const parsed = await parseSourcePage(page, source.name, signal);
+  const docs = [parsed.document];
   const links = official
     ? parsed.links.filter((link) => /about|company|product|solution|technolog|capabilit/i.test(link))
     : parsed.links;
   const more = await Promise.allSettled(
     links.slice(0, official ? 2 : deep ? 3 : 1).map(async (link) => {
-      const p = await fetchPage(link, signal);
-      if (official && !belongsToWebsite(p.url, source.url)) throw new Error("官网子页面域名不匹配。");
-      return parsePage(p.html, p.url, source.name).document;
+      return (await readSourcePage(link, source.name, signal, official ? source.url : undefined)).document;
     }),
   );
   for (const result of more)

@@ -23,14 +23,18 @@ export function textSimilarity(a: string, b: string) {
   const overlap = [...left].filter((part) => right.has(part)).length;
   return 2 * overlap / (left.size + right.size);
 }
+// Hash routes identify SPA pages; ordinary in-page anchors do not.
+export function normalizePageFragment(url: URL) {
+  if (!/^#!?\//.test(url.hash)) url.hash = "";
+}
 export function evidenceUrl(value: string) {
   try {
     const url = new URL(value);
-    url.hash = "";
+    normalizePageFragment(url);
     for (const key of [...url.searchParams.keys()])
       if (/^(utm_|fbclid$|gclid$)/i.test(key)) url.searchParams.delete(key);
     url.searchParams.sort();
-    return url.toString().replace(/\/$/, "");
+    return url.hash ? url.toString() : url.toString().replace(/\/$/, "");
   } catch { return value; }
 }
 
