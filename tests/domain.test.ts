@@ -6,7 +6,9 @@ import {
   validateUrl,
   parsePage,
   canonicalUrl,
+  buildDiscoveryPlan,
 } from "../src/server/collector";
+import { defaultSettings } from "../src/lib/seed";
 import {
   extractionSchema,
   groundExtraction,
@@ -147,6 +149,21 @@ test("parser takes explicit publication metadata, not current time", () => {
       .publishedAt,
     null,
   );
+});
+test("discovery plan always combines baseline, configured targets and sites", () => {
+  const plan = buildDiscoveryPlan(defaultSettings, 0);
+  const lanes = new Set(plan.map((entry) => entry.lane));
+  assert.deepEqual(
+    lanes,
+    new Set([
+      "常规行业扫描",
+      "配置关键词扩展",
+      "重点企业追踪",
+      "指定网站发现",
+    ]),
+  );
+  assert.ok(plan.some((entry) => entry.query.includes("industrial AI")));
+  assert.ok(plan.some((entry) => entry.query.includes("site:press.siemens.com")));
 });
 test("grounding discards fabricated quotes and binds dates to verified documents", () => {
   const item = {

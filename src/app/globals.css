@@ -129,25 +129,49 @@ select {
   padding: 0 6px;
 }
 .brand-mark {
-  color: #111820;
+  color: #9fe8ff;
   display: grid;
   place-items: center;
-  width: 41px;
+  width: 43px;
   height: 43px;
-  background: #ff8848;
-  border-radius: 10px;
-  transform: rotate(-3deg);
+  flex: 0 0 43px;
+  background: radial-gradient(circle at 50% 48%, #244d68 0, #132b3c 52%, #0e1925 100%);
+  border: 1px solid #4ebbe080;
+  border-radius: 12px;
+  box-shadow: inset 0 0 18px #47c5ef18, 0 0 20px #25aeda12;
+}
+.brand-mark svg {
+  width: 33px;
+  height: 33px;
+}
+.brand-mark path {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.35;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.brand-mark path:first-child {
+  fill: #5fd4f00b;
+}
+.brand-mark circle {
+  fill: #ff8848;
+  stroke: #ffd1b8;
+  stroke-width: 0.8;
+  filter: drop-shadow(0 0 4px #ff8848);
 }
 .brand strong {
   display: block;
-  font-size: 21px;
-  letter-spacing: 1.4px;
+  font-size: 15px;
+  line-height: 1.25;
+  letter-spacing: 0.5px;
   font-weight: 750;
 }
 .brand-en {
   display: block;
-  font-size: 9px;
-  letter-spacing: 2.1px;
+  font-size: 8px;
+  letter-spacing: 1.1px;
+  white-space: nowrap;
   color: #8994a5;
   margin-top: 5px;
   font-weight: 500;
@@ -238,7 +262,7 @@ select {
 }
 .sidebar-bottom {
   margin-top: auto;
-  padding-top: 28px;
+  padding: 28px 0 24px;
 }
 .agent-status {
   display: flex;
@@ -250,7 +274,7 @@ select {
   border-radius: 8px;
   font-size: 11px;
   color: #bbc7d5;
-  margin-bottom: 22px;
+  margin-bottom: 0;
 }
 .agent-status > span:nth-child(2) {
   flex: 1;
@@ -272,20 +296,6 @@ select {
   background: #66c6a6;
   flex-shrink: 0;
   box-shadow: 0 0 7px #66c6a630;
-}
-.company-footer {
-  border-top: 1px solid #242e3b;
-  padding: 20px 0 23px;
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  font-size: 12px;
-}
-.company-footer small {
-  display: block;
-  font-size: 10px;
-  color: #718093;
-  margin-top: 5px;
 }
 .avatar {
   background: #2c2725;
@@ -684,6 +694,16 @@ h1 {
 }
 .trend-chart {
   padding: 0 18px 8px;
+}
+.chart-empty {
+  min-height: 170px;
+  margin: 0;
+  display: grid;
+  place-items: center;
+  padding: 22px;
+  color: #75859a;
+  font-size: 12px;
+  text-align: center;
 }
 .trend-chart svg {
   display: block;
@@ -1994,7 +2014,7 @@ h1 {
     padding-right: 13px;
   }
   .brand strong {
-    font-size: 18px;
+    font-size: 14px;
   }
   .brand-en {
     font-size: 8px;
@@ -2542,6 +2562,15 @@ h1 {
   border-radius: 7px;
   background: #0c131d;
   color: inherit;
+}
+.unlock-error {
+  border: 1px solid #a84f5780;
+  border-radius: 7px;
+  background: #5d242c55;
+  color: #ffadb4;
+  padding: 9px 11px;
+  font-size: 12px;
+  line-height: 1.5;
 }
 .unlock-dialog form > div:last-child {
   display: flex;

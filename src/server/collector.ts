@@ -240,37 +240,98 @@ export async function collectSource(
     if (result.status === "fulfilled") docs.push(result.value);
   return docs;
 }
+export type DiscoveryLane = "常规行业扫描" | "配置关键词扩展" | "重点企业追踪" | "指定网站发现";
+export type DiscoveryQuery = {
+  lane: DiscoveryLane;
+  query: string;
+  topic: "news" | "general";
+};
+
+export function buildDiscoveryPlan(settings: Settings, day = Math.floor(Date.now() / 86400000)) {
+  const plan: DiscoveryQuery[] = [
+    {
+      lane: "常规行业扫描",
+      query:
+        '("industrial AI" OR "工业人工智能" OR "工业软件" OR "工业互联网") (产品发布 OR 技术突破 OR 融资 OR 并购)',
+      topic: "news",
+    },
+    {
+      lane: "常规行业扫描",
+      query:
+        '("manufacturing AI" OR "physical AI" OR "3D AI" OR "digital twin") (research OR benchmark OR platform OR release)',
+      topic: "general",
+    },
+  ];
+  const keywords = settings.keywords.slice(0, 8);
+  if (keywords.length)
+    plan.push({
+      lane: "配置关键词扩展",
+      query: `(${keywords.join(" OR ")}) (研究 OR 产品 OR 应用 OR 市场)`,
+      topic: "news",
+    });
+  if (settings.companies.length) {
+    const start = day % settings.companies.length;
+    const companies = settings.companies
+      .slice(start)
+      .concat(settings.companies.slice(0, start))
+      .slice(0, 5);
+    plan.push({
+      lane: "重点企业追踪",
+      query: `(${companies.join(" OR ")}) (战略 OR 产品 OR 技术 OR 合作 OR 融资 OR 收购)`,
+      topic: "news",
+    });
+  }
+  const domains = [
+    ...new Set(
+      settings.sources
+        .filter((source) => source.enabled)
+        .flatMap((source) => {
+          try {
+            return [validateUrl(source.url).hostname];
+          } catch {
+            return [];
+          }
+        }),
+    ),
+  ].slice(0, 4);
+  for (const domain of domains)
+    plan.push({
+      lane: "指定网站发现",
+      query: `site:${domain} (news OR research OR product OR solution OR 新闻 OR 研究 OR 产品)`,
+      topic: "general",
+    });
+  return plan;
+}
+
 export async function discover(settings: Settings, signal: AbortSignal) {
   if (!process.env.TAVILY_API_KEY) return [];
-  const day = Math.floor(Date.now() / 86400000);
-  const queries = [
-    settings.keywords.slice(0, 6).join(" OR "),
-    settings.companies
-      .slice(day % Math.max(1, settings.companies.length))
-      .concat(settings.companies)
-      .slice(0, 4)
-      .join(" OR ") + " 工业 AI 产品 融资",
-  ];
-  const urls: string[] = [];
-  for (const query of queries) {
+  const results: { url: string; lane: DiscoveryLane }[] = [];
+  for (const entry of buildDiscoveryPlan(settings)) {
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
         Authorization: `Bearer ${process.env.TAVILY_API_KEY}`,
       },
-      body: JSON.stringify({ query, max_results: 5, topic: "news", days: 5 }),
+      body: JSON.stringify({
+        query: entry.query,
+        max_results: 4,
+        topic: entry.topic,
+        ...(entry.topic === "news" ? { days: 5 } : {}),
+      }),
       signal: AbortSignal.any([signal, AbortSignal.timeout(15000)]),
     });
     if (!response.ok) throw new Error(`搜索服务返回 HTTP ${response.status}。`);
     const body = await response.json();
     for (const r of body.results ?? []) {
       try {
-        urls.push(canonicalUrl(r.url));
+        results.push({ url: canonicalUrl(r.url), lane: entry.lane });
       } catch {
         /* Validate all search results. */
       }
     }
   }
-  return [...new Set(urls)];
+  return [
+    ...new Map(results.map((result) => [result.url, result])).values(),
+  ];
 }

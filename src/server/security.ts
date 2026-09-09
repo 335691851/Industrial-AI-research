@@ -12,13 +12,22 @@ export function equalSecret(a: string, b: string) {
     y = Buffer.from(b);
   return x.length === y.length && timingSafeEqual(x, y);
 }
+export function workspaceAccess(request: Request) {
+  const configuredToken = process.env.WORKSPACE_ACCESS_TOKEN?.trim() ?? "";
+  return {
+    configured: Boolean(configuredToken),
+    editable: Boolean(
+      configuredToken &&
+        equalSecret(
+          request.headers.get("x-workspace-token")?.trim() ?? "",
+          configuredToken,
+        ),
+    ),
+  };
+}
 export function canEdit(request: Request) {
-  const configured = process.env.WORKSPACE_ACCESS_TOKEN;
-  if (configured)
-    return equalSecret(
-      request.headers.get("x-workspace-token") ?? "",
-      configured,
-    );
+  const access = workspaceAccess(request);
+  if (access.configured) return access.editable;
   if (process.env.VERCEL) return false;
   const host = new URL(request.url).hostname;
   return host === "localhost" || host === "127.0.0.1" || host === "[::1]";

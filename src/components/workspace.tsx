@@ -37,10 +37,20 @@ import {
 } from "@/lib/domain";
 import { SourceSettings } from "./source-settings";
 import { AgentPanel } from "./agent-panel";
-import { TrendChart, Heatmap } from "./charts";
+import { ActivityTrend, SignalMatrix } from "./charts";
 import { Detail } from "./detail";
 
 type View = "intelligence" | "sources" | "agents";
+
+async function readApiResponse<T>(response: Response): Promise<T> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.includes("application/json"))
+    throw new Error(
+      "当前部署的 API 被 Vercel 访问保护拦截，请使用最新生产域名或调整 Deployment Protection。",
+    );
+  return response.json() as Promise<T>;
+}
+
 export function Workspace() {
   const [view, setView] = useState<View>("intelligence");
   const [data, setData] = useState<Dashboard | null>(null);
@@ -57,14 +67,15 @@ export function Workspace() {
   const [accessToken, setAccessToken] = useState("");
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
-  const load = useCallback(async (silent = false) => {
+  const [unlockError, setUnlockError] = useState("");
+  const load = useCallback(async (silent = false, token = accessToken) => {
     if (!silent) setRefreshing(true);
     try {
       const r = await fetch("/api/workspace", {
         cache: "no-store",
-        headers: accessToken ? { "x-workspace-token": accessToken } : {},
+        headers: token ? { "x-workspace-token": token } : {},
       });
-      const body = await r.json();
+      const body = await readApiResponse<Dashboard & { error?: string }>(r);
       if (!r.ok) throw new Error(body.error);
       setData(body);
       setError("");
@@ -108,7 +119,7 @@ export function Workspace() {
       },
       body: JSON.stringify({ settings, keys, removeKeys }),
     });
-    const body = await response.json();
+    const body = await readApiResponse<Dashboard & { error?: string }>(response);
     if (!response.ok) throw new Error(body.error);
     setData(body);
     setNotice("配置已保存，下一次研究将使用此配置。");
@@ -124,7 +135,7 @@ export function Workspace() {
         },
         body: JSON.stringify({ mode, resumeId }),
       });
-      const body = await r.json();
+      const body = await readApiResponse<{ error?: string }>(r);
       if (!r.ok) throw new Error(body.error);
       setNotice("研究任务已启动，可在智能体记录中查看进度。");
       await load(true);
@@ -141,24 +152,30 @@ export function Workspace() {
   async function unlock() {
     const token = tokenInput.trim();
     if (!token) return;
+    setUnlockError("");
     setRefreshing(true);
     try {
-      const response = await fetch("/api/workspace", {
+      const response = await fetch("/api/access", {
+        method: "POST",
         cache: "no-store",
         headers: { "x-workspace-token": token },
       });
-      const body = await response.json();
+      const body = await readApiResponse<{
+        editable: boolean;
+        configured: boolean;
+        error?: string;
+      }>(response);
       if (!response.ok || !body.editable)
-        throw new Error("管理口令不正确，请检查后重试。");
+        throw new Error(body.error || "管理口令校验失败，请重试。");
       sessionStorage.setItem("workspace-access-token", token);
       setAccessToken(token);
       setTokenInput("");
       setUnlockOpen(false);
-      setData(body);
+      await load(true, token);
       setError("");
       setNotice("管理权限已解锁，本次浏览器会话内有效。");
     } catch (e) {
-      setNotice((e as Error).message);
+      setUnlockError((e as Error).message || "管理口令校验失败，请重试。");
     } finally {
       setRefreshing(false);
     }
@@ -190,13 +207,19 @@ export function Workspace() {
   return (
     <div className="app-shell">
       <aside className={`sidebar ${mobile ? "mobile-open" : ""}`}>
-        <a className="brand" href="/" aria-label="炽橙工业智能导航首页">
+        <a className="brand" href="/" aria-label="全球工业智能导航首页">
           <span className="brand-mark">
-            <Boxes size={25} strokeWidth={1.8} />
+            <svg viewBox="0 0 44 44" role="img" aria-label="工业智能导航标志">
+              <path d="M22 4 37.6 13v18L22 40 6.4 31V13Z" />
+              <path d="m13 25 9-13 9 13-9 7Z" />
+              <circle cx="22" cy="22" r="3.2" />
+              <path d="M6.4 13 22 22l15.6-9M22 40V22" />
+            </svg>
           </span>
           <span>
             <strong>
-              炽橙科技<span className="brand-en">CHICHENG TECH</span>
+              全球工业智能导航
+              <span className="brand-en">GLOBAL INDUSTRIAL AI</span>
             </strong>
           </span>
         </a>
@@ -278,12 +301,6 @@ export function Workspace() {
             </span>
             <Radio size={16} />
           </div>
-          <div className="company-footer">
-            <span className="avatar">炽</span>
-            <div>
-              炽橙行业研究室<small>企业共享工作台 · 无需登录</small>
-            </div>
-          </div>
         </div>
       </aside>
       {mobile && (
@@ -314,7 +331,7 @@ export function Workspace() {
               RESEARCH WORKSPACE
             </span>
             <span className="topbar-divider" />
-            <span className="avatar small">炽</span>
+            <span className="avatar small">AI</span>
           </div>
         </header>
         <main>
@@ -510,21 +527,21 @@ export function Workspace() {
                       <div className="panel-heading">
                         <h2>
                           <TrendingUp size={17} />
-                          技术关注趋势
+                          情报活跃趋势
                         </h2>
-                        <span className="subtle">近 5 天 · 情报数量</span>
+                        <span className="subtle">近 7 天 · 动态主题</span>
                       </div>
-                      <TrendChart items={items} />
+                      <ActivityTrend items={items} />
                     </section>
                     <section className="panel">
                       <div className="panel-heading">
                         <h2>
                           <Boxes size={17} />
-                          产业热点分布
+                          热点信号矩阵
                         </h2>
-                        <span className="subtle">企业 × 研究方向</span>
+                        <span className="subtle">动态主题 × 情报类型</span>
                       </div>
-                      <Heatmap items={items} onTopic={setTopic} />
+                      <SignalMatrix items={items} onTopic={setTopic} />
                     </section>
                   </div>
                   <div className="content-grid">
@@ -743,8 +760,8 @@ export function Workspace() {
               )}
               <footer className="page-footer">
                 <span>
-                  CHICHENG <span className="text-orange">/</span> INDUSTRIAL
-                  INTELLIGENCE
+                  GLOBAL <span className="text-orange">/</span> INDUSTRIAL
+                  INTELLIGENCE NAVIGATOR
                 </span>
                 <span>
                   <Database size={12} />
@@ -781,12 +798,18 @@ export function Workspace() {
               onChange={(event) => setTokenInput(event.target.value)}
               placeholder="输入管理口令"
             />
+            {unlockError && (
+              <div className="unlock-error" role="alert">
+                {unlockError}
+              </div>
+            )}
             <div>
               <button
                 className="button secondary"
                 type="button"
                 onClick={() => {
                   setTokenInput("");
+                  setUnlockError("");
                   setUnlockOpen(false);
                 }}
               >

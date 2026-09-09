@@ -1,166 +1,185 @@
 "use client";
-import { Item, topics } from "@/lib/domain";
+import { Item } from "@/lib/domain";
 
-export function TrendChart({ items }: { items: Item[] }) {
+const palette = ["#ff853f", "#7395ff", "#55c8aa"];
+const weight = { critical: 3, high: 2, normal: 1 } as const;
+
+function rankedTopics(items: Item[], limit: number) {
+  const scores = new Map<string, number>();
+  for (const item of items)
+    scores.set(item.topic, (scores.get(item.topic) ?? 0) + weight[item.importance]);
+  return [...scores.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .slice(0, limit)
+    .map(([topic]) => topic);
+}
+
+export function ActivityTrend({ items }: { items: Item[] }) {
   const today = new Date();
-  const dates = Array.from({ length: 5 }, (_, i) => {
-    const d = new Date(today.getTime() - (4 - i) * 86400000);
+  const dates = Array.from({ length: 7 }, (_, index) => {
+    const date = new Date(today.getTime() - (6 - index) * 86400000);
     return {
-      key: d.toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" }),
-      label: d.toLocaleDateString("zh-CN", {
+      key: date.toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" }),
+      label: date.toLocaleDateString("zh-CN", {
         month: "2-digit",
         day: "2-digit",
         timeZone: "Asia/Shanghai",
       }),
     };
   });
-  const lines = ["3D 模型 + AI", "工业智能", "制造业 + AI"];
-  const colors = ["#ff853f", "#7395ff", "#55c8aa"];
-  const series = lines.map((topic) =>
+  const topics = rankedTopics(items, 3);
+  const series = topics.map((topic) =>
     dates.map(
-      (d) =>
+      (date) =>
         items.filter(
-          (i) =>
-            i.topic === topic &&
-            i.publishedAt &&
-            new Date(i.publishedAt).toLocaleDateString("en-CA", {
+          (item) =>
+            item.topic === topic &&
+            new Date(item.observedAt).toLocaleDateString("en-CA", {
               timeZone: "Asia/Shanghai",
-            }) === d.key,
+            }) === date.key,
         ).length,
     ),
   );
   const max = Math.max(2, ...series.flat());
+  if (!topics.length)
+    return <p className="chart-empty">研究完成后，这里将按实际主题生成近 7 天趋势。</p>;
   return (
     <div className="trend-chart">
       <div className="chart-legend">
-        {lines.map((l, i) => (
-          <span key={l}>
-            <i style={{ background: colors[i] }} />
-            {l}
+        {topics.map((topic, index) => (
+          <span key={topic}>
+            <i style={{ background: palette[index] }} />
+            {topic}
           </span>
         ))}
       </div>
       <svg
         viewBox="0 0 580 185"
         role="img"
-        aria-label="近5天主题情报数量趋势，按原文发布日期统计"
+        aria-label={`近7天情报活跃趋势：${topics.join("、")}`}
       >
-        <defs>
-          <linearGradient id="orangeFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#ff853f" stopOpacity=".16" />
-            <stop offset="100%" stopColor="#ff853f" stopOpacity="0" />
-          </linearGradient>
-        </defs>
-        {[0, 1, 2, 3].map((i) => (
-          <g key={i}>
+        {[0, 1, 2, 3].map((index) => (
+          <g key={index}>
             <line
               x1="32"
-              y1={15 + i * 42}
+              y1={15 + index * 42}
               x2="567"
-              y2={15 + i * 42}
+              y2={15 + index * 42}
               stroke="#28313d"
               strokeDasharray="3 5"
             />
-            <text x="4" y={20 + i * 42} fill="#778496" fontSize="11">
-              {Math.round(max * (1 - i / 3))}
+            <text x="4" y={20 + index * 42} fill="#778496" fontSize="11">
+              {Math.round(max * (1 - index / 3))}
             </text>
           </g>
         ))}
-        {series.map((values, s) => {
+        {series.map((values, seriesIndex) => {
           const points = values.map(
-            (v, i) => `${40 + i * 130},${141 - (v / max) * 125}`,
+            (value, index) =>
+              `${40 + index * (520 / 6)},${141 - (value / max) * 125}`,
           );
           return (
-            <g key={s}>
-              {s === 0 && (
-                <polygon
-                  points={`40,141 ${points.join(" ")} 560,141`}
-                  fill="url(#orangeFill)"
-                />
-              )}
+            <g key={topics[seriesIndex]}>
               <polyline
                 points={points.join(" ")}
                 fill="none"
-                stroke={colors[s]}
+                stroke={palette[seriesIndex]}
                 strokeWidth="2.5"
                 strokeLinejoin="round"
               />
-              {values.map((v, i) => (
+              {values.map((value, index) => (
                 <circle
-                  key={i}
-                  cx={40 + i * 130}
-                  cy={141 - (v / max) * 125}
+                  key={dates[index].key}
+                  cx={40 + index * (520 / 6)}
+                  cy={141 - (value / max) * 125}
                   r="3.5"
-                  fill={colors[s]}
+                  fill={palette[seriesIndex]}
                 >
                   <title>
-                    {dates[i].label} {lines[s]}：{v} 条
+                    {dates[index].label} {topics[seriesIndex]}：{value} 条
                   </title>
                 </circle>
               ))}
             </g>
           );
         })}
-        {dates.map((d, i) => (
+        {dates.map((date, index) => (
           <text
-            key={d.key}
-            x={40 + i * 130}
+            key={date.key}
+            x={40 + index * (520 / 6)}
             y="175"
             textAnchor="middle"
             fill="#8c98aa"
-            fontSize="12"
+            fontSize="11"
           >
-            {d.label}
+            {date.label}
           </text>
         ))}
       </svg>
     </div>
   );
 }
-export function Heatmap({
+
+export function SignalMatrix({
   items,
   onTopic,
 }: {
   items: Item[];
   onTopic: (topic: string) => void;
 }) {
-  const companies = [...new Set(items.map((i) => i.company))]
-    .filter((c) => c !== "行业综合")
+  const topics = rankedTopics(items, 5);
+  const categoryCounts = new Map<string, number>();
+  const signalScores = new Map<string, number>();
+  for (const item of items) {
+    categoryCounts.set(
+      item.category,
+      (categoryCounts.get(item.category) ?? 0) + 1,
+    );
+    const key = `${item.topic}\u0000${item.category}`;
+    signalScores.set(key, (signalScores.get(key) ?? 0) + weight[item.importance]);
+  }
+  const categories = [...categoryCounts.keys()]
+    .sort((a, b) => categoryCounts.get(b)! - categoryCounts.get(a)!)
     .slice(0, 4);
+  if (!topics.length || !categories.length)
+    return <p className="chart-empty">等待有效情报形成动态热点信号矩阵。</p>;
+  const columns = {
+    gridTemplateColumns: `104px repeat(${categories.length}, 1fr)`,
+  };
   return (
     <div className="heatmap">
-      <div className="heat-row heat-heading">
-        <span>研究方向</span>
-        {companies.map((c) => (
-          <span key={c} title={c}>
-            {c}
+      <div className="heat-row heat-heading" style={columns}>
+        <span>动态主题</span>
+        {categories.map((category) => (
+          <span key={category} title={category}>
+            {category}
           </span>
         ))}
       </div>
-      {topics.slice(0, 5).map((topic) => (
-        <button onClick={() => onTopic(topic)} className="heat-row" key={topic}>
+      {topics.map((topic) => (
+        <button
+          onClick={() => onTopic(topic)}
+          className="heat-row"
+          style={columns}
+          key={topic}
+        >
           <span>{topic}</span>
-          {companies.map((c) => {
-            const count = items.filter(
-              (i) => i.topic === topic && i.company === c,
-            ).length;
+          {categories.map((category) => {
+            const score = signalScores.get(`${topic}\u0000${category}`) ?? 0;
             return (
               <span
-                key={c}
-                className={`heat-cell heat-${Math.min(count, 3)}`}
-                title={`${topic} · ${c}：${count} 条`}
+                key={category}
+                className={`heat-cell heat-${Math.min(score, 3)}`}
+                title={`${topic} · ${category}：信号强度 ${score}`}
               >
-                {count || "·"}
+                {score || "·"}
               </span>
             );
           })}
         </button>
       ))}
-      {!companies.length && (
-        <p className="muted">等待情报生成后形成热点分布。</p>
-      )}
       <div className="heat-scale">
-        <span>按情报条数统计</span>
+        <span>综合数量与重要级别</span>
         <span>
           低 <i className="heat-0" />
           <i className="heat-1" />
