@@ -120,7 +120,7 @@ export function SourceSettings({
                 研究关键词<span>{form.keywords.length} / 50</span>
               </h3>
               <p className="muted">
-                用于筛选情报与指导研究，可用逗号批量添加。
+                用于筛选情报与指导研究，可用逗号批量添加；保存后同步到左侧研究关键词。
               </p>
               <div className="editable-tags">
                 {form.keywords.map((k) => (

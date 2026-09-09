@@ -2732,6 +2732,10 @@ select:focus-visible { outline-color: #ff9863; }
 .sidebar-divider { background: #e9edf3; }
 .focus-links button { color: #66768b; }
 .focus-links button:hover { color: #243b59; background: #f2f6fb; }
+.focus-links { min-height: 0; overflow-y: auto; max-height: 40vh; scrollbar-width: thin; }
+.focus-links button { overflow-wrap: anywhere; }
+.focus-links i { flex-shrink: 0; }
+.focus-links button[aria-pressed="true"] { color: #b76833; background: #fff3e9; }
 .agent-status {
   color: #4f6177;
   background: #f5faf8;

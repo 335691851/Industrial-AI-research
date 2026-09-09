@@ -283,13 +283,16 @@ export function Workspace() {
           ))}
         </nav>
         <div className="sidebar-divider" />
-        <div className="workspace-label">FOCUS AREAS</div>
-        <div className="focus-links">
-          {topics.map((t, i) => (
+        <div className="workspace-label">研究关键词 · 已保存 {data?.settings.keywords.length ?? 0}</div>
+        <div className="focus-links" aria-label="已保存的研究关键词">
+          {(data?.settings.keywords ?? []).map((t, i) => (
             <button
               key={t}
+              aria-pressed={view === "intelligence" && query === t}
               onClick={() => {
-                setTopic(t);
+                setTopic("全部领域");
+                setCategory("全部情报");
+                setQuery(t);
                 navigate("intelligence");
               }}
             >
@@ -302,12 +305,13 @@ export function Workspace() {
                     "#5cc8b0",
                     "#d5b567",
                     "#70899e",
-                  ][i],
+                  ][i % 6],
                 }}
               />
               {t}
             </button>
           ))}
+          {data && data.settings.keywords.length === 0 && <button onClick={() => navigate("sources")}>尚未配置，前往添加</button>}
         </div>
         <div className="sidebar-bottom">
           <div className="agent-status">
