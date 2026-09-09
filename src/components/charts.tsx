@@ -16,7 +16,7 @@ export function ResearchInsights({ items, report, onSelect }: {
       {report && <small>{new Date(report.generatedAt).toLocaleDateString("zh-CN", { timeZone: "Asia/Shanghai" })} 更新 · 分析判断</small>}
     </div>
     {report ? <>
-      <div id={contentId} className="synthesis-content">
+      <div id={contentId} className="synthesis-content" role="region" aria-label="洞察摘要与结论" tabIndex={expanded ? undefined : 0}>
       <div className="synthesis-overview"><span>核心研判</span><p>{report.overview}</p></div>
       {!expanded && <div className="synthesis-concepts" aria-label="结论摘要">{report.conclusions.map((conclusion, index) => <span key={conclusion.concept + index}>{conclusion.concept}</span>)}</div>}
       {expanded && <div className="synthesis-conclusions">{report.conclusions.map((conclusion, index) => <article className="synthesis-conclusion" key={conclusion.concept + index}>

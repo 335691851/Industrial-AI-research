@@ -9,7 +9,7 @@ test("insights stay within half a screen and preserve expandable details", async
       overview: "工业智能的竞争正在从单点技术延伸到系统交付与场景验证。".repeat(15),
       generatedAt: new Date().toISOString(), runId: "layout-check", basis: "layout-check",
       conclusions: Array.from({ length: 6 }, (_, index) => ({
-        concept: `产业观察结论 ${index + 1}`,
+        concept: `产业观察结论 ${index + 1}：工业智能体平台化与全栈化成为主流，本体库与工程化能力构筑核心竞争优势，完整长标题应当换行展示。`,
         judgment: "需要结合客户场景评估技术能力。",
         reasoning: "完整推理内容保留。", implication: "检验交付能力。",
         watchpoint: "追踪后续验证结果。", evidenceIds: [],
@@ -27,6 +27,20 @@ test("insights stay within half a screen and preserve expandable details", async
     const buttonBounds = await toggle.boundingBox();
     expect(buttonBounds!.y + buttonBounds!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height);
     await expect(panel.locator(".synthesis-conclusion")).toHaveCount(0);
+    const concepts = panel.locator(".synthesis-concepts span");
+    await expect(concepts).toHaveCount(6);
+    expect(await concepts.evaluateAll((elements) => elements.every((element) => {
+      const style = getComputedStyle(element);
+      return style.whiteSpace === "normal" && style.textOverflow !== "ellipsis"
+        && element.scrollWidth <= element.clientWidth + 1
+        && element.scrollHeight <= element.clientHeight + 1;
+    }))).toBe(true);
+    const content = panel.getByRole("region", { name: "洞察摘要与结论" });
+    await content.focus();
+    await page.keyboard.press("Control+End");
+    await expect.poll(() => content.evaluate((element) =>
+      element.scrollHeight - element.clientHeight - element.scrollTop,
+    )).toBeLessThanOrEqual(1);
     await toggle.click();
     await expect(panel.locator(".synthesis-conclusion")).toHaveCount(6);
     await expect(panel.getByText("完整推理内容保留。").first()).toBeVisible();

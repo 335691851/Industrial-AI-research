@@ -3009,7 +3009,8 @@ h1 { color: #132038; font-size: 31px; letter-spacing: -.4px; font-weight: 720; }
 .synthesis-panel { margin: 20px 0 26px; overflow: hidden; }
 .synthesis-panel.is-compact { display: flex; flex-direction: column; max-height: 50svh; }
 .synthesis-content { min-height: 0; }
-.is-compact .synthesis-content { overflow: hidden; }
+.is-compact .synthesis-content { overflow-y: auto; overflow-x: hidden; scrollbar-width: thin; scrollbar-color: #c5d1e3 transparent; }
+.synthesis-content:focus-visible { outline: 2px solid #7195c4; outline-offset: -2px; }
 .synthesis-heading { flex-shrink: 0; padding: 14px 22px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; border-bottom: 1px solid #edf0f5; }
 .synthesis-heading > div { display: flex; align-items: center; gap: 10px; }
 .synthesis-heading svg { color: #d9945e; }
@@ -3020,8 +3021,8 @@ h1 { color: #132038; font-size: 31px; letter-spacing: -.4px; font-weight: 720; }
 .synthesis-overview > span { font-size: 10px; letter-spacing: 2px; color: #b77e50; }
 .synthesis-overview p { margin: 6px 0 0; font-size: 14px; line-height: 1.75; font-weight: 500; color: #35435a; overflow-wrap: anywhere; }
 .is-compact .synthesis-overview p { display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-.synthesis-concepts { display: flex; gap: 8px; padding: 10px 22px; overflow: hidden; }
-.synthesis-concepts span { min-width: 0; padding: 4px 9px; border-radius: 6px; background: #f2f6fc; color: #617a9d; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.synthesis-concepts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; padding: 10px 22px; }
+.synthesis-concepts span { min-width: 0; padding: 7px 10px; border-radius: 6px; background: #f2f6fc; color: #617a9d; font-size: 12px; line-height: 1.65; white-space: normal; overflow-wrap: anywhere; }
 .synthesis-conclusions { padding: 0 28px; }
 .synthesis-conclusion { display: grid; grid-template-columns: 38px minmax(0, 1fr); gap: 18px; padding: 27px 0; border-bottom: 1px solid #edf0f5; }
 .synthesis-conclusion:last-child { border-bottom: 0; }
@@ -3053,7 +3054,7 @@ h1 { color: #132038; font-size: 31px; letter-spacing: -.4px; font-weight: 720; }
   .synthesis-heading, .synthesis-overview { padding: 12px 16px; }
   .synthesis-heading span { display: none; }
   .synthesis-overview p { font-size: 13px; }
-  .synthesis-concepts { padding: 8px 16px; }
+  .synthesis-concepts { grid-template-columns: 1fr; padding: 8px 16px; }
   .synthesis-footer { padding: 8px 16px; }
   .synthesis-footer > span { display: none; }
   .synthesis-footer button { margin-left: auto; }
