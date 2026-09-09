@@ -1037,9 +1037,15 @@ h1 {
   padding: 3px 6px;
 }
 .feed-footer .tag {
-  font-size: 9px;
-  padding: 2px 6px;
-  background: #18212d;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+  padding: 3px 9px;
+  color: #526b8c;
+  background: #eff4fb;
+  border: 1px solid #dce6f3;
+  border-radius: 6px;
+  box-shadow: none;
 }
 .feed-end {
   text-align: center;
