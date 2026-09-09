@@ -487,12 +487,7 @@ export function Workspace() {
                     </div>
                     <PriorityCarousel items={highlights} onSelect={setDetail} />
                   </section>
-                  <ResearchInsights items={items} onSelect={setDetail} onFilter={(selectedTopic, selectedCategory) => {
-                    setTopic(selectedTopic ?? "全部领域");
-                    setCategory(selectedCategory ?? "全部情报");
-                    setQuery("");
-                    document.getElementById("intelligence-feed")?.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "start" });
-                  }} />
+                  <ResearchInsights items={items} report={data.insights} onSelect={setDetail} />
                   <div className="content-grid">
                     <section className="feed-section" id="intelligence-feed">
                       <div className="section-heading">

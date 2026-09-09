@@ -168,6 +168,20 @@ export type ResearchArchive = {
   items: Item[];
   profiles: Profile[];
 };
+export type InsightReport = {
+  overview: string;
+  conclusions: {
+    concept: string;
+    judgment: string;
+    reasoning: string;
+    implication: string;
+    watchpoint: string;
+    evidenceIds: string[];
+  }[];
+  generatedAt: string;
+  runId: string;
+  basis: string;
+};
 export type Database = {
   settings: Settings;
   credentials: Partial<Record<ProviderId, string>>;
@@ -175,8 +189,10 @@ export type Database = {
   profiles: Profile[];
   runs: Run[];
   archives?: ResearchArchive[];
+  insights?: InsightReport;
 };
 export type Dashboard = {
+  insights?: InsightReport;
   items: Item[];
   profiles: Profile[];
   runs: Run[];

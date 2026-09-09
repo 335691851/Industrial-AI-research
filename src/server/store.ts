@@ -14,6 +14,7 @@ import {
   normalizeItemDate,
 } from "@/lib/domain";
 import { identityText } from "@/lib/identity";
+import { currentInsights } from "./synthesis";
 import { emptyDatabase } from "@/lib/seed";
 
 const dataFolder = () => path.join(process.cwd(), ".data");
@@ -204,12 +205,14 @@ export async function dashboard(editable = false): Promise<Dashboard> {
     });
     db = await readDatabase();
   }
+  const items = mergeItems([], db.items).filter((i) => recentIntelligence(i));
   return {
+    insights: currentInsights(db.insights, items),
     settings: db.settings,
     configured: Object.fromEntries(
       Object.entries(db.credentials).map(([k, v]) => [k, Boolean(v)]),
     ),
-    items: mergeItems([], db.items).filter((i) => recentIntelligence(i)),
+    items,
     profiles: dashboardProfiles(db),
     runs: db.runs.slice(-40).reverse(),
     storage: isCloud() ? "supabase" : "local",

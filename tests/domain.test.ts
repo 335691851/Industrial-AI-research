@@ -11,7 +11,7 @@ import {
 } from "../src/server/collector";
 import { defaultSettings } from "../src/lib/seed";
 import { normalizeItemDate, effectiveDate, rebuildItems } from "../src/lib/domain";
-import { researchAnalysis } from "../src/lib/analysis";
+import { currentInsights, validateInsights } from "../src/server/synthesis";
 import { dashboardProfiles } from "../src/server/store";
 import { emptyDatabase } from "../src/lib/seed";
 import {
@@ -113,25 +113,24 @@ test("missing and malformed publication dates expire by first generation, includ
   assert.equal(rebuildItems([{ ...old, evidence }], [{ ...incoming, evidence, eventKey: "rediscovered-key" }], now).length, 0);
 });
 
-test("analysis compares equal periods and never treats generated dates as industry acceleration", () => {
-  const now = new Date("2026-09-09T12:00:00Z");
-  const events = [
-    { ...baseItem(), publishedAt: "2026-09-08T00:00:00Z" },
-    { ...baseItem(), publishedAt: "2026-09-02T12:00:00Z" },
-    { ...baseItem(), publishedAt: null },
-    { ...baseItem(), publishedAt: "2026-07-01T00:00:00Z" },
-  ];
-  const report = researchAnalysis(events, 7, now);
-  assert.equal(report.total, 3);
-  assert.equal(report.current, 1);
-  assert.equal(report.previous, 1);
-  assert.equal(report.fallback, 1);
-  assert.equal(report.movement[0].delta, 0);
-  assert.equal(report.actions[0].count, 3);
-  const noHistory = researchAnalysis([events[0]], 7, now);
-  assert.equal(noHistory.previous, 0);
-  assert.equal(noHistory.movement[0].earlier, 0);
-  assert.equal(researchAnalysis([], 7, now).total, 0);
+test("synthesis validates distinct events, pages and expires with its evidence corpus", () => {
+  const events = [0, 1].map((i) => ({ ...baseItem(), id: `event-${i}`, evidence: [{ url: `https://example.com/${i}`, title: "原文", quote: "已核验的企业原始披露内容" }] }));
+  const conclusion = {
+    concept: "交付能力成为产品竞争的重要组成部分",
+    judgment: "两家企业的案例提示，产品竞争需要同时关注软件能力与现场交付能力。",
+    reasoning: "两条事件分别反映产品能力和场景落地，说明在当前研究样本中二者呈现互补关系。",
+    implication: "炽橙可进一步验证目标客户对现场交付能力的要求。",
+    watchpoint: "仍需观察实际客户验收结果，不能据此判断全行业已经完成转向。",
+    evidenceIds: events.map((event) => event.id),
+  };
+  const output = { overview: "当前研究样本提示需要同时评估工业软件能力和客户场景中的实际交付路径。", conclusions: [conclusion] };
+  const report = validateInsights(output, events, "run-test");
+  assert.equal(currentInsights(report, [...events].reverse()), report);
+  assert.equal(currentInsights(report, events.slice(0, 1)), undefined);
+  assert.equal(currentInsights(report, [{ ...events[0], summary: "修正后的事实" }, events[1]]), undefined);
+  assert.throws(() => validateInsights({ ...output, conclusions: [{ ...conclusion, evidenceIds: ["event-0", "not-real"] }] }, events, "run-test"));
+  assert.throws(() => validateInsights({ ...output, conclusions: [{ ...conclusion, evidenceIds: ["event-0", "event-0"] }] }, events, "run-test"));
+  assert.throws(() => validateInsights(output, events.map((e) => ({ ...e, evidence: events[0].evidence })), "run-test"));
 });
 
 test("company archives outlive news window and failed refresh cannot erase them", () => {

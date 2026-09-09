@@ -101,12 +101,12 @@ export function AgentPanel({
           <span className="subtle">端到端可追溯</span>
         </div>
         <div className="pipeline">
-          {["自主规划", "来源采集", "覆盖检查", "补充搜索", "结构化分析", "证据校验", "融合发布"].map(
+          {["自主规划", "来源采集", "覆盖检查", "补充搜索", "结构化分析", "证据校验", "综合洞察", "融合发布"].map(
             (s, i) => (
               <div key={s}>
                 <span>0{i + 1}</span>
                 <strong>{s}</strong>
-                {i < 6 && <span className="pipeline-arrow">→</span>}
+                {i < 7 && <span className="pipeline-arrow">→</span>}
               </div>
             ),
           )}

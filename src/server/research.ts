@@ -14,7 +14,9 @@ import {
   rebuildItems,
   recentIntelligence,
   INTELLIGENCE_WINDOW_DAYS,
+  InsightReport,
 } from "@/lib/domain";
+import { currentInsights, synthesisInstruction, validateInsights } from "./synthesis";
 import {
   collectSource,
   discover,
@@ -247,6 +249,7 @@ const State = Annotation.Root({
   extracted: Annotation<Extraction>(),
   items: Annotation<Item[]>(),
   profiles: Annotation<Profile[]>(),
+  insights: Annotation<InsightReport | null>(),
 });
 const hash = (s: string) =>
   createHash("sha256").update(s).digest("hex").slice(0, 24);
@@ -529,6 +532,7 @@ export async function executeRun(
   dependencies = { collectSource, complete, discover },
 ) {
   let persistence: Awaited<ReturnType<typeof checkpointer>> | undefined;
+  const executionStarted = Date.now();
   const signal = AbortSignal.timeout(255000);
   try {
     const db = await readDatabase();
@@ -1002,6 +1006,35 @@ export async function executeRun(
         if (missing.length) await log(id, "企业画像覆盖", `本轮未完成官网画像：${missing.join("、")}；保留历史画像，请检查官网可访问性和材料完整性。`, "warning");
         return { items, profiles };
       })
+      .addNode("synthesize", async (state) => {
+        const snapshot = await readDatabase();
+        const items = state.mode === "full"
+          ? rebuildItems(snapshot.items, state.items)
+          : mergeItems(snapshot.items, state.items).filter((item) => recentIntelligence(item));
+        const budget = Math.min(35000, 255000 - (Date.now() - executionStarted) - 12000);
+        if (items.length < 2 || budget < 5000) {
+          await log(id, "综合洞察", items.length < 2 ? "有效事件不足两个，暂不生成跨事件研判。" : "本次剩余预算不足，先发布已核验情报，综合洞察等待下次研究更新。", "warning");
+          return { insights: null };
+        }
+        try {
+          const value = await dependencies.complete(settings.selectedProvider, run.model, key,
+            synthesisInstruction, JSON.stringify({
+              context: "炽橙科技：自主几何内核、云化仿真、物理 AI、工业智能体与智能运维。",
+              scope: "当前完整的最近30天有效情报，含本次研究与仍有效的历史事件",
+              events: items.map((item) => ({
+                id: item.id, title: item.title, fact: item.summary, category: item.category,
+                company: item.company, publishedAt: item.publishedAt,
+                evidence: item.evidence.map((e) => ({ url: e.url, quote: e.quote.slice(0, 350) })),
+              })),
+            }), AbortSignal.any([signal, AbortSignal.timeout(budget)]));
+          const insights = validateInsights(value, items, id);
+          await log(id, "综合洞察", `基于完整 ${items.length} 条有效事件生成 ${insights.conclusions.length} 条跨事件研判，已检查关联事件及原文页面。`);
+          return { insights };
+        } catch (error) {
+          await log(id, "综合洞察", `综合研判暂未生成，已核验情报继续发布：${publicError(error)}`, "warning");
+          return { insights: null };
+        }
+      })
       .addNode("publish", async (state) => {
         await mutateDatabase((current) => {
           const now = new Date();
@@ -1033,6 +1066,7 @@ export async function executeRun(
               now,
             );
           }
+          current.insights = currentInsights(state.insights ?? current.insights, current.items);
           const active = current.runs.find((r) => r.id === id)!;
           active.itemCount = state.items.length;
           active.sourceStats = state.sourceStats;
@@ -1054,7 +1088,8 @@ export async function executeRun(
       .addEdge("coverage", "supplement")
       .addEdge("supplement", "extract")
       .addEdge("extract", "verify")
-      .addEdge("verify", "publish")
+      .addEdge("verify", "synthesize")
+      .addEdge("synthesize", "publish")
       .addEdge("publish", END)
       .compile({ checkpointer: persistence.saver });
     const config = {
