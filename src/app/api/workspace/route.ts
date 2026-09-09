@@ -31,6 +31,7 @@ export async function PUT(request: Request) {
     for (const source of body.settings.sources) {
       validateUrl(source.url);
     }
+    for (const website of Object.values(body.settings.companyWebsites ?? {})) validateUrl(website);
     const encrypted = Object.fromEntries(
       await Promise.all(
         Object.entries(body.keys ?? {})

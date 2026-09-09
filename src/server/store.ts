@@ -9,8 +9,10 @@ import {
   normalizeCategory,
   providers,
   recentIntelligence,
-  INTELLIGENCE_WINDOW_DAYS,
+  mergeItems,
+  mergeProfiles,
 } from "@/lib/domain";
+import { identityText } from "@/lib/identity";
 import { emptyDatabase } from "@/lib/seed";
 
 const dataFolder = () => path.join(process.cwd(), ".data");
@@ -63,17 +65,13 @@ function removeLegacyDemoContent(db: Database): Database {
   };
 }
 
-function dashboardProfiles(db: Database, now = new Date()) {
-  const valid = db.profiles.filter((profile) => {
-    const updated = Date.parse(profile.updatedAt);
-    return Number.isFinite(updated) &&
-      updated >= now.getTime() - INTELLIGENCE_WINDOW_DAYS * 86400000;
-  });
+export function dashboardProfiles(db: Database, now = new Date()) {
+  const valid = mergeProfiles([], db.profiles.filter((profile) => profile.evidence.length));
   const byName = new Map(
-    valid.map((profile) => [profile.name.replace(/\s+/g, "").toLowerCase(), profile]),
+    valid.map((profile) => [identityText(profile.name), profile]),
   );
   const configured = db.settings.companies.map((name) => {
-    const key = name.replace(/\s+/g, "").toLowerCase();
+    const key = identityText(name);
     const profile = byName.get(key);
     if (profile) {
       byName.delete(key);
@@ -82,10 +80,10 @@ function dashboardProfiles(db: Database, now = new Date()) {
     return {
       id: `configured-${encodeURIComponent(key)}`,
       name,
-      narrative: "已纳入重点研究，等待最近 30 天有效信息刷新。",
-      positioning: "重点研究企业",
+      narrative: "尚未获得可核验官网资料，请核对来源配置中的企业官网后开展研究。",
+      positioning: "企业官网研究待完成",
       solutions: [], capabilities: [],
-      funding: "最近 30 天未发现可核验披露",
+      funding: "未披露",
       implication: "持续跟踪技术、产品、战略与资本变化。",
       evidence: [], updatedAt: now.toISOString(),
     } satisfies Profile;
@@ -209,7 +207,7 @@ export async function dashboard(editable = false): Promise<Dashboard> {
     configured: Object.fromEntries(
       Object.entries(db.credentials).map(([k, v]) => [k, Boolean(v)]),
     ),
-    items: db.items.filter((i) => recentIntelligence(i)),
+    items: mergeItems([], db.items.filter((i) => recentIntelligence(i))),
     profiles: dashboardProfiles(db),
     runs: db.runs.slice(-40).reverse(),
     storage: isCloud() ? "supabase" : "local",

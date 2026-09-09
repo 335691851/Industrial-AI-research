@@ -10,6 +10,8 @@ import {
   discover,
 } from "../src/server/collector";
 import { defaultSettings } from "../src/lib/seed";
+import { dashboardProfiles } from "../src/server/store";
+import { emptyDatabase } from "../src/lib/seed";
 import {
   extractionSchema,
   groundExtraction,
@@ -68,6 +70,47 @@ test("all intelligence uses a unified rolling 30-day effective window", () => {
     recentIntelligence({ ...base, publishedAt: null }, now),
     true,
   );
+});
+
+test("Sony Aramco bilingual headlines collapse across event keys and categories", () => {
+  const titles = [
+    "索尼半导体与沙特阿美签署非约束性协议，共推工业AI",
+    "索尼与沙特阿美签署谅解备忘录，共推工业AI解决方案",
+    "Sony Semiconductor与Aramco签署工业AI合作备忘录，聚焦视觉传感与边缘AI",
+  ];
+  const summaries = [
+    "索尼半导体解决方案公司与沙特阿美签署非约束性谅解备忘录，将结合索尼的图像传感和边缘AI技术。",
+    "索尼半导体解决方案公司与沙特阿美签署非约束性谅解备忘录，探索结合索尼传感与AI技术及阿美工业能力。",
+    "Sony Semiconductor Solutions与Aramco签署非约束性谅解备忘录，探索工业AI合作，结合Sony图像传感器与边缘AI技术。",
+  ];
+  const items = titles.map((title, i) => ({ ...baseItem(), id: `sony-${i}`, eventKey: `sony-${i}`, title, summary: summaries[i], evidence: [{ url: `https://example.com/${i}`, title, quote: summaries[i] }] }));
+  const merged = mergeItems(items, []);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].evidence.length, 3);
+  assert.equal(mergeItems(merged, items).length, 1);
+  const unrelated = { ...items[0], id: "different", eventKey: "different", title: "索尼发布新一代图像传感器", summary: "索尼发布新一代图像传感器，提升像素和成像性能。", evidence: [{ ...items[0].evidence[0], quote: "新的独立产品发布事件，与签署协议不同。" }] };
+  assert.equal(mergeItems(items, [unrelated]).length, 2);
+  assert.equal(mergeItems([items[0]], [{ ...items[0], id: "later", eventKey: "later", publishedAt: "2026-10-09T00:00:00Z" }]).length, 2);
+});
+
+test("company archives outlive news window and failed refresh cannot erase them", () => {
+  const db = emptyDatabase();
+  db.settings.companies = ["能科科技"];
+  const profile = { ...baseProfile(), name: "能科科技", basis: "official" as const, updatedAt: "2024-01-01T00:00:00Z", solutions: ["工业软件"], capabilities: ["数字孪生"], evidence: [{ url: "https://www.nancal.com/", title: "官网", quote: "企业官网原文证据" }] };
+  db.profiles = mergeProfiles([profile], [{ ...profile, basis: undefined, evidence: [], solutions: [], capabilities: [], narrative: "占位" }]);
+  assert.equal(dashboardProfiles(db)[0].narrative, profile.narrative);
+  assert.equal(dashboardProfiles(db)[0].updatedAt, profile.updatedAt);
+});
+
+test("official profile documents produce complete grounded profiles, never fresh news", () => {
+  const quote = "能科科技提供工业软件及数字孪生产品技术服务";
+  const document = { url: "https://www.nancal.com/", title: "官网", text: quote, publishedAt: null, source: "官网", profileCompany: "能科科技" };
+  const profile = { ...baseProfile(), name: "能科科技", solutions: ["工业软件"], capabilities: ["数字孪生"], evidence: [{ document: 0, quote }] };
+  const output = extractionSchema.parse({ items: [{ ...baseItem(), evidence: [{ document: 0, quote }] }], profiles: [profile, { ...profile, name: "其他公司" }, { ...profile, solutions: [] }] });
+  const grounded = groundExtraction(output, [document], "official-test");
+  assert.equal(grounded.items.length, 0);
+  assert.equal(grounded.profiles.length, 1);
+  assert.equal(grounded.profiles[0].basis, "official");
 });
 test("fusion is idempotent, unions sources and never re-dates rediscovered events", () => {
   const item = {
@@ -152,6 +195,7 @@ test("major signals require confidence and evidence, then rank by quality", () =
   const critical = { ...baseItem(), importance: "critical" as const, confidence: 0.9, evidence };
   const weak = { ...baseItem(), id: "weak", eventKey: "weak", confidence: 0.7, evidence };
   assert.deepEqual(prioritySignals([weak, critical]).map((item) => item.id), [critical.id]);
+  assert.equal(prioritySignals([{ ...baseItem(), confidence: .95, evidence: [...evidence, { ...evidence[0], url: "https://example.com/?utm_source=copy", quote: "another quote" }] }]).length, 0);
 });
 test("settings reject unlisted model identifiers", () => {
   assert.equal(settingsSchema.safeParse(defaultSettings).success, true);

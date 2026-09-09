@@ -26,6 +26,7 @@ import { complete } from "./model";
 import { checkpointer } from "./checkpoints";
 import { mutateDatabase, readDatabase } from "./store";
 import { decrypt, publicError } from "./security";
+import { identityText, officialWebsite, belongsToWebsite } from "@/lib/identity";
 
 const citationSchema = z.object({
   document: z.number().int().nonnegative(),
@@ -292,7 +293,11 @@ function withinWindow(document: Document, startDate: string) {
   );
 }
 function selectFair(documents: Document[], max = 100) {
-  const unique = [...new Map(documents.map((document) => [document.url, document])).values()];
+  const byUrl = new Map<string, Document>();
+  for (const document of documents) {
+    if (!byUrl.get(document.url)?.profileCompany) byUrl.set(document.url, document);
+  }
+  const unique = [...byUrl.values()];
   const groups = new Map<string, Document[]>();
   for (const document of unique)
     groups.set(document.source, [...(groups.get(document.source) ?? []), document]);
@@ -300,7 +305,8 @@ function selectFair(documents: Document[], max = 100) {
   while (selected.length < max && [...groups.values()].some((group) => group.length))
     for (const group of groups.values())
       if (group.length && selected.length < max) selected.push(group.shift()!);
-  return { unique, selected };
+  const official = unique.filter((document) => document.profileCompany);
+  return { unique, selected: [...official, ...selected.filter((document) => !document.profileCompany)].slice(0, max) };
 }
 
 function refreshProfiles(
@@ -308,26 +314,21 @@ function refreshProfiles(
   configuredCompanies: string[],
   now = new Date(),
 ) {
-  const valid = profiles.filter((profile) => {
-    const updated = Date.parse(profile.updatedAt);
-    return Number.isFinite(updated) &&
-      updated >= now.getTime() - INTELLIGENCE_WINDOW_DAYS * 86400000;
-  });
-  const byName = new Map(valid.map((profile) => [norm(profile.name), profile]));
+  const byName = new Map(profiles.map((profile) => [identityText(profile.name), profile]));
   const configured = configuredCompanies.map((name) => {
-    const current = byName.get(norm(name));
+    const current = byName.get(identityText(name));
     if (current) {
-      byName.delete(norm(name));
+      byName.delete(identityText(name));
       return current;
     }
     return {
       id: `configured-${hash(norm(name))}`,
       name,
-      narrative: "本轮尚未发现最近 30 天内可核验的新信息，已保留为重点研究企业。",
-      positioning: "等待下一轮研究刷新",
+      narrative: "企业官网资料尚未成功核验，请在来源配置中核对企业官网后重新研究。",
+      positioning: "官网研究待完成",
       solutions: [],
       capabilities: [],
-      funding: "最近 30 天未发现可核验披露",
+      funding: "未披露",
       implication: "持续跟踪该企业的技术、产品、战略和资本动态。",
       evidence: [],
       updatedAt: now.toISOString(),
@@ -395,7 +396,7 @@ export function groundExtraction(
     });
   const observedAt = new Date().toISOString();
   const items: Item[] = output.items.flatMap((i) => {
-    const sources = evidence(i.evidence);
+    const sources = evidence(i.evidence.filter((c) => !documents[c.document]?.profileCompany));
     if (!sources.length) return [];
     const dates = documents
       .filter(
@@ -422,8 +423,10 @@ export function groundExtraction(
     ];
   });
   const profiles: Profile[] = output.profiles.flatMap((p) => {
-    const sources = evidence(p.evidence);
-    if (!sources.length) return [];
+    const sources = evidence(p.evidence.filter((c) =>
+      identityText(documents[c.document]?.profileCompany ?? "") === identityText(p.name)));
+    if (!sources.length || !p.narrative.trim() || !p.positioning.trim() ||
+      !p.solutions.some((v) => v.trim()) || !p.capabilities.some((v) => v.trim())) return [];
     // Financing is quoted, not paraphrased: avoid publishing invented amounts or rounds.
     const funding =
       p.funding &&
@@ -437,6 +440,7 @@ export function groundExtraction(
     return [
       {
         ...p,
+        basis: "official" as const,
         id: `company-${hash(norm(p.name))}`,
         evidence: sources,
         updatedAt: observedAt,
@@ -604,6 +608,27 @@ export async function executeRun(
       .addNode("collect", async (state) => {
         const docs: Document[] = [];
         const stats = emptyStats();
+        // Reserve two source slots per company before the open-web budget is spent.
+        for (let index = 0; index < state.settings.companies.length; index += 4) {
+          const names = state.settings.companies.slice(index, index + 4);
+          await Promise.all(names.map(async (name) => {
+            const website = officialWebsite(name, state.settings.companyWebsites);
+            if (!website) {
+              await log(id, "企业官网研究", `${name}：尚未配置官网，请在来源配置中补充企业官网。`, "warning");
+              return;
+            }
+            try {
+              const pages = await dependencies.collectSource({ id: `official-company:${name}`, name, url: website, kind: "website", enabled: true }, signal, true);
+              const accepted = pages.filter((page) => belongsToWebsite(page.url, website)).slice(0, 2);
+              docs.push(...accepted.map((page) => ({ ...page, source: `企业官网 · ${name}`, profileCompany: name })));
+              stats.read += pages.length;
+              await log(id, "企业官网研究", `${name}：读取 ${pages.length} 份官网资料，接纳 ${accepted.length} 份；不受新闻 30 天窗口限制。`, accepted.length ? "ok" : "warning");
+            } catch (error) {
+              stats.failed++;
+              await log(id, "企业官网研究", `${name}：${publicError(error)}，保留已有有效画像。`, "warning");
+            }
+          }));
+        }
         const enabled = state.settings.sources.filter((s) => s.enabled);
         for (let index = 0; index < enabled.length; index += 4) {
           signal.throwIfAborted();
@@ -651,7 +676,7 @@ export async function executeRun(
               discovery,
               signal,
               state.startDate,
-              80,
+              Math.max(0, 100 - docs.length),
               new Set(docs.map((document) => document.url)),
             );
             docs.push(...fetched.documents);
@@ -886,6 +911,8 @@ export async function executeRun(
                   importance: ["critical", "high", "normal"],
                 },
                 rules: [
+                  "profileCompany 标记的材料是企业官网基线，只生成该企业的 profiles，不生成新闻 items，不受 researchWindowStart 限制。",
+                  "必须为每家具有官网材料的企业提取叙事、定位、产品方案、技术能力；仅按原文填写。profiles 只引用对应 profileCompany 的材料，官网营销表述注明为企业自述。材料不足不得编造。",
                   "综合常规行业扫描、指定网站和重点企业三类材料，以事件价值为先，不按来源逐篇摘要。",
                   "指定网站是定向采集入口，关键词和企业是全网检索线索；任何单一来源都不能限定整体分析范围。",
                   "分类规则：技术论文与核心能力归技术前沿；产品或版本发布归产品发布；客户案例与场景落地归解决方案；定位、合作和组织动作归企业战略；政策、供需与产业生态归产业市场；融资、投资与并购归资本动态。",
@@ -924,6 +951,18 @@ export async function executeRun(
                 throw new Error(
                   `模型返回内容无法映射到发布框架（${lastDiagnostic}），未发布。可从检查点恢复。`,
                 );
+              const targets = [...new Set(batch.flatMap((document) => document.profileCompany ? [document.profileCompany] : []))];
+              const missing = targets.filter((name) => !result!.profiles.some((profile) =>
+                identityText(profile.name) === identityText(name) && profile.narrative.trim() && profile.positioning.trim() && profile.solutions.length && profile.capabilities.length));
+              if (missing.length) {
+                try {
+                  const repaired = normalizeExtraction(await dependencies.complete(settings.selectedProvider, run.model, key, system,
+                    prompt + `\n专项补充企业官网画像：${missing.join("、")}。items 输出 []，针对每家企业输出完整 profiles 的叙事、定位、产品与能力；只用对应官网原文，缺少证据不可编造。`, signal));
+                  if (repaired.extraction) result.profiles.push(...repaired.extraction.profiles);
+                } catch (error) {
+                  await log(id, "企业画像补充", publicError(error), "warning");
+                }
+              }
               await log(
                 id,
                 "结构化分析",
@@ -954,7 +993,12 @@ export async function executeRun(
         );
         if (!grounded.items.length && !grounded.profiles.length)
           throw new Error("本次没有通过证据校验的研究内容，历史内容已保留。");
-        return grounded;
+        const items = mergeItems([], grounded.items);
+        const profiles = mergeProfiles([], grounded.profiles);
+        await log(id, "事件融合", `证据通过 ${grounded.items.length} 条，跨批次去重合并 ${grounded.items.length - items.length} 条，唯一事件 ${items.length} 条；官网画像 ${profiles.length} 家。`);
+        const missing = settings.companies.filter((name) => !profiles.some((p) => identityText(p.name) === identityText(name)));
+        if (missing.length) await log(id, "企业画像覆盖", `本轮未完成官网画像：${missing.join("、")}；保留历史画像，请检查官网可访问性和材料完整性。`, "warning");
+        return { items, profiles };
       })
       .addNode("publish", async (state) => {
         await mutateDatabase((current) => {
@@ -975,7 +1019,7 @@ export async function executeRun(
               recentIntelligence(item, now),
             );
             current.profiles = refreshProfiles(
-              mergeProfiles([], state.profiles),
+              mergeProfiles(current.profiles, state.profiles),
               current.settings.companies,
               now,
             );
@@ -997,8 +1041,8 @@ export async function executeRun(
             node: "融合发布",
             message:
               state.mode === "full"
-                ? "旧研究快照已归档，当前情报与企业画像已按最近 30 天有效证据重建。"
-                : "当天增量已与最近 30 天有效信息融合，31 天前内容已自动剔除。",
+                ? "旧研究快照已归档，新闻按最近 30 天重建；企业官网画像独立刷新，历史有效画像保留。"
+                : "当天新闻已去重融合，31 天前新闻已剔除；企业官网画像独立刷新并长期保留。",
             status: "ok",
           });
         });

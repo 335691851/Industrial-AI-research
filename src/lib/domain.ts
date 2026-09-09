@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { evidenceUrl, identityText, textSimilarity } from "./identity";
 
 export const topics = [
   "工业互联网",
@@ -80,6 +81,7 @@ export const settingsSchema = z.object({
   revision: z.number().int().nonnegative(),
   keywords: z.array(z.string().trim().min(1).max(100)).max(50),
   companies: z.array(z.string().trim().min(1).max(100)).max(30),
+  companyWebsites: z.record(z.string().max(100), z.url().max(2000)).optional(),
   sources: z.array(sourceSchema).max(30),
   selectedProvider: z.enum(providerIds),
   models: z.object({
@@ -128,6 +130,7 @@ export type Profile = {
   implication: string;
   evidence: Evidence[];
   updatedAt: string;
+  basis?: "official";
 };
 export type Run = {
   id: string;
@@ -212,7 +215,7 @@ export const recentNews = recentIntelligence;
 
 export function priorityScore(item: Item, now = new Date()) {
   const importance = { critical: 42, high: 24, normal: 0 }[item.importance];
-  const evidence = Math.min(item.evidence.length, 4) * 6;
+  const evidence = Math.min(new Set(item.evidence.map((e) => evidenceUrl(e.url))).size, 4) * 6;
   const confidence = Math.round(item.confidence * 20);
   const date = Date.parse(item.publishedAt ?? item.observedAt);
   const ageDays = Number.isFinite(date)
@@ -222,9 +225,10 @@ export function priorityScore(item: Item, now = new Date()) {
 }
 
 export function isMajorSignal(item: Item) {
+  const sourceCount = new Set(item.evidence.map((e) => evidenceUrl(e.url))).size;
   return (
     (item.importance === "critical" && item.confidence >= 0.72 && item.evidence.length >= 1) ||
-    (item.importance === "high" && item.confidence >= 0.82 && item.evidence.length >= 2)
+    (item.importance === "high" && item.confidence >= 0.82 && sourceCount >= 2)
   );
 }
 
@@ -234,18 +238,20 @@ export function prioritySignals(items: Item[], now = new Date()) {
     .sort((a, b) => priorityScore(b, now) - priorityScore(a, now));
 }
 export function mergeItems(existing: Item[], incoming: Item[]) {
-  const map = new Map(existing.map((i) => [i.eventKey, i]));
-  for (const item of incoming) {
-    const prior = map.get(item.eventKey);
+  const map = new Map<string, Item>();
+  for (const item of [...existing, ...incoming]) {
+    const prior = map.get(item.eventKey) ?? [...map.values()].find((other) => sameEvent(other, item));
     if (prior) {
       const evidence = [...prior.evidence, ...item.evidence].filter(
         (e, i, all) =>
-          all.findIndex((a) => a.url === e.url && a.quote === e.quote) === i,
+          all.findIndex((a) => evidenceUrl(a.url) === evidenceUrl(e.url) && a.quote === e.quote) === i,
       );
       // Do not re-date an event just because it was rediscovered.
-      map.set(item.eventKey, {
-        ...item,
+      map.set(prior.eventKey, {
+        ...(item.confidence > prior.confidence ? item : prior),
         id: prior.id,
+        eventKey: prior.eventKey,
+        observedAt: prior.observedAt < item.observedAt ? prior.observedAt : item.observedAt,
         publishedAt: prior.publishedAt ?? item.publishedAt,
         evidence,
       });
@@ -256,12 +262,14 @@ export function mergeItems(existing: Item[], incoming: Item[]) {
   );
 }
 export function mergeProfiles(existing: Profile[], incoming: Profile[]) {
-  const map = new Map(existing.map((p) => [p.id, p]));
+  const map = new Map(existing.map((p) => [identityText(p.name), p]));
   for (const p of incoming) {
-    const old = map.get(p.id);
+    const old = map.get(identityText(p.name));
+    if (old?.basis === "official" && p.basis !== "official") continue;
+    if (old?.evidence.length && !p.evidence.length) continue;
     map.set(
-      p.id,
-      old
+      identityText(p.name),
+      old && !(p.basis === "official" && old.basis !== "official")
         ? {
             ...p,
             narrative: p.narrative || old.narrative,
@@ -281,4 +289,24 @@ export function mergeProfiles(existing: Profile[], incoming: Profile[]) {
     );
   }
   return [...map.values()];
+}
+
+export function sameEvent(a: Item, b: Item) {
+  const companyA = identityText(a.company), companyB = identityText(b.company);
+  if (companyA && companyB && companyA !== "行业" && companyB !== "行业" && companyA !== companyB &&
+    !identityText(`${a.title} ${a.summary}`).includes(companyB) &&
+    !identityText(`${b.title} ${b.summary}`).includes(companyA)) return false;
+  const dateA = Date.parse(a.publishedAt ?? a.observedAt);
+  const dateB = Date.parse(b.publishedAt ?? b.observedAt);
+  if (!Number.isFinite(dateA) || !Number.isFinite(dateB) || Math.abs(dateA - dateB) > 7 * 86400000) return false;
+  const titleSimilarity = textSimilarity(a.title, b.title);
+  const summarySimilarity = textSimilarity(a.summary, b.summary);
+  const sharedQuote = a.evidence.some((left) => b.evidence.some((right) =>
+    identityText(left.quote).length >= 24 && textSimilarity(left.quote, right.quote) >= .85));
+  const sharedPage = a.evidence.some((left) => b.evidence.some((right) => evidenceUrl(left.url) === evidenceUrl(right.url)));
+  // A page can cover many events: sharing a URL alone never merges them.
+  return titleSimilarity >= .82 || summarySimilarity >= .8 ||
+    (titleSimilarity >= .48 && summarySimilarity >= .5) ||
+    (sharedQuote && (titleSimilarity >= .28 || summarySimilarity >= .35)) ||
+    (sharedPage && titleSimilarity >= .52);
 }

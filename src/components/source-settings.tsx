@@ -12,6 +12,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { Dashboard, Settings, Source } from "@/lib/domain";
+import { officialWebsite } from "@/lib/identity";
 
 export function SourceSettings({
   data,
@@ -201,6 +202,25 @@ export function SourceSettings({
                 </button>
               </form>
             </section>
+          </div>
+          <div className="section-heading source-heading">
+            <h2>企业官网档案</h2>
+          </div>
+          <div className="panel" style={{ padding: 20, marginBottom: 24 }}>
+            <p className="muted">官网用于提取企业定位、产品和技术能力，资料不受新闻 30 天限制。可补充或修正每家企业的官网。</p>
+            {form.companies.map((name) => (
+              <label key={name} style={{ display: "grid", gridTemplateColumns: "100px minmax(0, 1fr)", gap: 12, alignItems: "center", marginTop: 12 }}>
+                {name}
+                <input aria-label={`${name}官网`} type="url" placeholder="https://企业官网"
+                  value={officialWebsite(name, form.companyWebsites) ?? ""}
+                  onChange={(e) => {
+                    const websites = { ...form.companyWebsites };
+                    if (e.target.value) websites[name] = e.target.value;
+                    else delete websites[name];
+                    update({ companyWebsites: websites });
+                  }} />
+              </label>
+            ))}
           </div>
           <div className="section-heading source-heading">
             <h2>信息来源</h2>

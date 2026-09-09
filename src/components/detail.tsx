@@ -57,14 +57,16 @@ export function Detail({
         {profile && (
           <>
             <div className="detail-meta">
-              <Building2 size={16} /> 企业持续跟踪档案
+              <Building2 size={16} /> {profile.basis === "official" ? "企业官网档案 · 企业自述" : "企业持续跟踪档案"}
             </div>
+            {profile.evidence.length > 0 && <p className="muted">最近核验：{new Date(profile.updatedAt).toLocaleDateString("zh-CN")} · 官网档案长期保留，独立于新闻时间窗口</p>}
             <h3>企业叙事逻辑</h3>
             <p>{profile.narrative || "暂无可核验披露"}</p>
             <h3>市场定位</h3>
             <p>{profile.positioning || "暂无可核验披露"}</p>
             <h3>产品与解决方案</h3>
             <div className="tag-group">
+              {!profile.solutions.length && <p>官网产品资料尚未核验，请检查官网配置或查看研究日志。</p>}
               {profile.solutions.map((s) => (
                 <span className="tag" key={s}>
                   {s}
@@ -73,6 +75,7 @@ export function Detail({
             </div>
             <h3>新技术与能力</h3>
             <ul>
+              {!profile.capabilities.length && <li>官网技术资料尚未核验，请检查官网配置或查看研究日志。</li>}
               {profile.capabilities.map((c) => (
                 <li key={c}>{c}</li>
               ))}

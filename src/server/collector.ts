@@ -4,6 +4,7 @@ import ipaddr from "ipaddr.js";
 import { Agent, fetch as secureFetch } from "undici";
 import * as cheerio from "cheerio";
 import { Run, Source, Settings, topics } from "@/lib/domain";
+import { belongsToWebsite } from "@/lib/identity";
 
 export type Document = {
   url: string;
@@ -11,6 +12,7 @@ export type Document = {
   text: string;
   publishedAt: string | null;
   source: string;
+  profileCompany?: string;
 };
 export function publicAddress(address: string) {
   try {
@@ -156,7 +158,7 @@ export function parsePage(
       const target = new URL(href, url);
       if (
         target.hostname === new URL(url).hostname &&
-        /news|blog|press|article|release|research|product|solution|\/s\?/i.test(
+        /about|company|capabilit|technolog|news|blog|press|article|release|research|product|solution|\/s\?/i.test(
           target.pathname + target.search,
         )
       )
@@ -230,9 +232,16 @@ export async function collectSource(
   }
   const parsed = parsePage(page.html, page.url, source.name);
   const docs = [parsed.document];
+  const official = source.id.startsWith("official-company:");
+  if (official && !belongsToWebsite(page.url, source.url))
+    throw new Error("企业官网跳转到其他域名，请核对官网地址。");
+  const links = official
+    ? parsed.links.filter((link) => /about|company|product|solution|technolog|capabilit/i.test(link))
+    : parsed.links;
   const more = await Promise.allSettled(
-    parsed.links.slice(0, deep ? 3 : 1).map(async (link) => {
+    links.slice(0, official ? 2 : deep ? 3 : 1).map(async (link) => {
       const p = await fetchPage(link, signal);
+      if (official && !belongsToWebsite(p.url, source.url)) throw new Error("官网子页面域名不匹配。");
       return parsePage(p.html, p.url, source.name).document;
     }),
   );
