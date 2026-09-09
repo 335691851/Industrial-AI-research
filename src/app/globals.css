@@ -2990,6 +2990,18 @@ h1 { color: #132038; font-size: 31px; letter-spacing: -.4px; font-weight: 720; }
   .carousel-arrow.next { right: -8px; }
   .carousel-arrow { width: 34px; height: 34px; }
 }
+.page-heading.intelligence-heading { min-height: 0; padding: 15px 23px; margin-bottom: 18px; border-radius: 12px; }
+.intelligence-heading .eyebrow { font-size: 9px; letter-spacing: 1.6px; }
+.intelligence-heading h1 { font-size: 26px; line-height: 1.25; margin: 7px 0 5px; }
+.intelligence-heading p { margin: 0; font-size: 12px; line-height: 1.5; }
+@media (max-width: 720px) {
+  .page-heading.intelligence-heading { padding: 13px 15px; }
+  .intelligence-heading > div { padding-left: 38px; }
+  .intelligence-heading .mobile-nav-trigger { position: absolute; left: 0; top: 3px; margin: 0; }
+  .intelligence-heading .eyebrow { font-size: 7px; letter-spacing: .9px; }
+  .intelligence-heading h1 { font-size: 22px; }
+  .intelligence-heading p { font-size: 11px; }
+}
 .synthesis-panel { margin: 28px 0 34px; overflow: hidden; }
 .synthesis-heading { padding: 23px 27px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid #edf0f5; }
 .synthesis-heading > div { display: flex; align-items: center; gap: 10px; }

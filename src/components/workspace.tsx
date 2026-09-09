@@ -329,7 +329,7 @@ export function Workspace() {
       )}
       <div className="main-shell">
         <main>
-          <div className="page-heading">
+          <div className={`page-heading${view === "intelligence" ? " intelligence-heading" : ""}`}>
             <div>
               <button
                 aria-label="打开导航"
@@ -358,7 +358,7 @@ export function Workspace() {
                     : "从信息采集到证据核验，每一步研究都有迹可循。"}
               </p>
             </div>
-            <div className="heading-actions">
+            {view !== "intelligence" && <div className="heading-actions">
               {!data?.editable && (
                 <button
                   className="button secondary"
@@ -385,7 +385,7 @@ export function Workspace() {
                 {active ? "研究进行中" : "全量重研"}
                 <ArrowUpRight size={16} />
               </button>
-            </div>
+            </div>}
           </div>
           {error && (
             <div className="error-banner" role="alert">
@@ -401,7 +401,7 @@ export function Workspace() {
           )}
           {data && (
             <>
-              {!data.editable && (
+              {!data.editable && view !== "intelligence" && (
                 <div className="readonly-banner">
                   当前工作区已锁定。输入管理口令后可保存配置、管理密钥并启动研究。
                   <button onClick={() => setUnlockOpen(true)}>
