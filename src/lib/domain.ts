@@ -9,42 +9,64 @@ export const topics = [
   "智能运维",
 ] as const;
 export const categories = [
-  "前沿研究",
-  "重大成果",
-  "产品方案",
-  "行业新闻",
-  "企业动态",
-  "投融资",
+  "技术前沿",
+  "产品发布",
+  "解决方案",
+  "企业战略",
+  "产业市场",
+  "资本动态",
 ] as const;
 export const providerIds = ["deepseek", "openai", "glm", "qwen"] as const;
 export type ProviderId = (typeof providerIds)[number];
 export const providers: Record<
   ProviderId,
-  { name: string; baseUrl: string; model: string; color: string }
+  {
+    name: string;
+    baseUrl: string;
+    model: string;
+    color: string;
+    models: { id: string; label: string }[];
+  }
 > = {
   deepseek: {
     name: "DeepSeek",
     baseUrl: "https://api.deepseek.com",
-    model: "deepseek-chat",
+    model: "deepseek-v4-flash",
     color: "#638aff",
+    models: [
+      { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash" },
+      { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro" },
+    ],
   },
   openai: {
     name: "OpenAI",
     baseUrl: "https://api.openai.com/v1",
     model: "gpt-4.1-mini",
     color: "#65d7b8",
+    models: [
+      { id: "gpt-4.1-mini", label: "GPT-4.1 mini" },
+      { id: "gpt-4.1", label: "GPT-4.1" },
+    ],
   },
   glm: {
     name: "GLM · 智谱",
     baseUrl: "https://open.bigmodel.cn/api/paas/v4",
-    model: "glm-4-plus",
+    model: "glm-5.2",
     color: "#a692ff",
+    models: [
+      { id: "glm-5.2", label: "GLM-5.2" },
+    ],
   },
   qwen: {
     name: "Qwen · 通义千问",
     baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    model: "qwen-plus",
+    model: "qwen3.7-plus",
     color: "#bc92f9",
+    models: [
+      { id: "qwen3.7-plus", label: "Qwen3.7 Plus" },
+      { id: "qwen3.8-max", label: "Qwen3.8 Max" },
+      { id: "qwen-plus", label: "Qwen Plus（兼容）" },
+    ],
   },
 };
 export const sourceSchema = z.object({
@@ -66,6 +88,15 @@ export const settingsSchema = z.object({
     glm: z.string().min(1).max(100),
     qwen: z.string().min(1).max(100),
   }),
+}).superRefine((settings, context) => {
+  for (const provider of providerIds) {
+    if (!providers[provider].models.some(({ id }) => id === settings.models[provider]))
+      context.addIssue({
+        code: "custom",
+        path: ["models", provider],
+        message: `${providers[provider].name} 模型名称不在当前支持列表中`,
+      });
+  }
 });
 export type Settings = z.infer<typeof settingsSchema>;
 export type Source = z.infer<typeof sourceSchema>;
@@ -150,15 +181,57 @@ export type Dashboard = {
   editable: boolean;
 };
 
-export function recentNews(item: Item, now = new Date()) {
-  if (!["行业新闻", "企业动态", "投融资"].includes(item.category)) return true;
-  if (!item.publishedAt) return false;
-  const date = Date.parse(item.publishedAt);
+export const INTELLIGENCE_WINDOW_DAYS = 30;
+
+const legacyCategories: Record<string, Item["category"]> = {
+  前沿研究: "技术前沿",
+  重大成果: "技术前沿",
+  产品方案: "解决方案",
+  行业新闻: "产业市场",
+  企业动态: "企业战略",
+  投融资: "资本动态",
+};
+
+export function normalizeCategory(value: string): Item["category"] {
+  if ((categories as readonly string[]).includes(value))
+    return value as Item["category"];
+  return legacyCategories[value] ?? "产业市场";
+}
+
+export function recentIntelligence(item: Item, now = new Date()) {
+  const date = Date.parse(item.publishedAt ?? item.observedAt);
   return (
     Number.isFinite(date) &&
     date <= now.getTime() &&
-    date >= now.getTime() - 5 * 86400000
+    date >= now.getTime() - INTELLIGENCE_WINDOW_DAYS * 86400000
   );
+}
+
+// Compatibility name for callers created before the unified 30-day window.
+export const recentNews = recentIntelligence;
+
+export function priorityScore(item: Item, now = new Date()) {
+  const importance = { critical: 42, high: 24, normal: 0 }[item.importance];
+  const evidence = Math.min(item.evidence.length, 4) * 6;
+  const confidence = Math.round(item.confidence * 20);
+  const date = Date.parse(item.publishedAt ?? item.observedAt);
+  const ageDays = Number.isFinite(date)
+    ? Math.max(0, (now.getTime() - date) / 86400000)
+    : INTELLIGENCE_WINDOW_DAYS;
+  return importance + evidence + confidence + Math.max(0, 14 - ageDays / 2);
+}
+
+export function isMajorSignal(item: Item) {
+  return (
+    (item.importance === "critical" && item.confidence >= 0.72 && item.evidence.length >= 1) ||
+    (item.importance === "high" && item.confidence >= 0.82 && item.evidence.length >= 2)
+  );
+}
+
+export function prioritySignals(items: Item[], now = new Date()) {
+  return items
+    .filter(isMajorSignal)
+    .sort((a, b) => priorityScore(b, now) - priorityScore(a, now));
 }
 export function mergeItems(existing: Item[], incoming: Item[]) {
   const map = new Map(existing.map((i) => [i.eventKey, i]));

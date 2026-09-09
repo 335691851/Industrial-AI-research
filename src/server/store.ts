@@ -1,7 +1,16 @@
 import { createClient } from "@supabase/supabase-js";
 import { mkdir, readFile, writeFile, rename, rmdir } from "node:fs/promises";
 import path from "node:path";
-import { Database, Dashboard, Item, Profile, recentNews } from "@/lib/domain";
+import {
+  Database,
+  Dashboard,
+  Item,
+  Profile,
+  normalizeCategory,
+  providers,
+  recentIntelligence,
+  INTELLIGENCE_WINDOW_DAYS,
+} from "@/lib/domain";
 import { emptyDatabase } from "@/lib/seed";
 
 const dataFolder = () => path.join(process.cwd(), ".data");
@@ -26,15 +35,59 @@ function localAllowed() {
 // A one-way compatibility cleanup for workspaces created before demo content
 // was removed. The cleaned snapshot is persisted on the next mutation.
 function removeLegacyDemoContent(db: Database): Database {
-  const items = db.items.filter(
-    (item) => (item as Item & { demo?: unknown }).demo !== true,
-  );
+  const items = db.items
+    .filter((item) => (item as Item & { demo?: unknown }).demo !== true)
+    .map((item) => ({ ...item, category: normalizeCategory(String(item.category)) }));
   const profiles = db.profiles.filter(
     (profile) => (profile as Profile & { demo?: unknown }).demo !== true,
   );
-  return items.length === db.items.length && profiles.length === db.profiles.length
-    ? db
-    : { ...db, items, profiles };
+  const legacyModels: Record<string, string> = {
+    "deepseek-chat": providers.deepseek.model,
+    "deepseek-reasoner": providers.deepseek.model,
+    "glm-4-plus": providers.glm.model,
+  };
+  const models = Object.fromEntries(
+    Object.entries(db.settings.models).map(([id, model]) => [
+      id,
+      legacyModels[model] ?? model,
+    ]),
+  ) as Database["settings"]["models"];
+  return {
+    ...db,
+    settings: { ...db.settings, models },
+    items,
+    profiles,
+  };
+}
+
+function dashboardProfiles(db: Database, now = new Date()) {
+  const valid = db.profiles.filter((profile) => {
+    const updated = Date.parse(profile.updatedAt);
+    return Number.isFinite(updated) &&
+      updated >= now.getTime() - INTELLIGENCE_WINDOW_DAYS * 86400000;
+  });
+  const byName = new Map(
+    valid.map((profile) => [profile.name.replace(/\s+/g, "").toLowerCase(), profile]),
+  );
+  const configured = db.settings.companies.map((name) => {
+    const key = name.replace(/\s+/g, "").toLowerCase();
+    const profile = byName.get(key);
+    if (profile) {
+      byName.delete(key);
+      return profile;
+    }
+    return {
+      id: `configured-${encodeURIComponent(key)}`,
+      name,
+      narrative: "已纳入重点研究，等待最近 30 天有效信息刷新。",
+      positioning: "重点研究企业",
+      solutions: [], capabilities: [],
+      funding: "最近 30 天未发现可核验披露",
+      implication: "持续跟踪技术、产品、战略与资本变化。",
+      evidence: [], updatedAt: now.toISOString(),
+    } satisfies Profile;
+  });
+  return [...configured, ...byName.values()];
 }
 async function cloudRow() {
   const db = client();
@@ -153,8 +206,8 @@ export async function dashboard(editable = false): Promise<Dashboard> {
     configured: Object.fromEntries(
       Object.entries(db.credentials).map(([k, v]) => [k, Boolean(v)]),
     ),
-    items: db.items.filter((i) => recentNews(i)),
-    profiles: db.profiles,
+    items: db.items.filter((i) => recentIntelligence(i)),
+    profiles: dashboardProfiles(db),
     runs: db.runs.slice(-40).reverse(),
     storage: isCloud() ? "supabase" : "local",
     editable,

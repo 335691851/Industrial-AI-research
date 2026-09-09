@@ -27,6 +27,9 @@ export async function complete(
           max_tokens: 6500,
           response_format: { type: "json_object" },
           ...(provider === "qwen" ? { enable_thinking: false } : {}),
+          ...(provider === "deepseek" || provider === "glm"
+            ? { thinking: { type: "disabled" } }
+            : {}),
         }),
         signal: AbortSignal.any([signal, AbortSignal.timeout(45000)]),
       },

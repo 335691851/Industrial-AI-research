@@ -288,8 +288,18 @@ export function buildDiscoveryPlan(
     ),
     query(
       "常规行业扫描",
-      "产品方案",
+      "产品与方案",
       '(工业智能 OR industrial intelligence OR industrial agent) (产品 OR 平台 OR 解决方案 OR customer case)',
+    ),
+    query(
+      "常规行业扫描",
+      "企业战略",
+      '(工业软件 OR industrial AI OR manufacturing AI) (战略 OR 定位 OR 合作 OR 生态 OR partnership)',
+    ),
+    query(
+      "常规行业扫描",
+      "产业市场",
+      '(工业智能 OR 工业软件 OR manufacturing AI) (政策 OR 市场 OR 产业 OR 报告 OR adoption)',
     ),
     query(
       "常规行业扫描",
@@ -413,9 +423,7 @@ export async function discover(
             chunks_per_source: 3,
             max_results: mode === "full" ? 10 : 8,
             topic: entry.topic,
-            ...(entry.topic === "news" && mode === "incremental"
-              ? { days: 5 }
-              : { start_date: startDate }),
+            start_date: startDate,
           }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
         });
