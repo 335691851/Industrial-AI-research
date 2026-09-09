@@ -52,9 +52,12 @@ function removeLegacyDemoContent(db: Database): Database {
       legacyModels[model] ?? model,
     ]),
   ) as Database["settings"]["models"];
+  const sources = db.settings.sources.filter(
+    (source) => (source as { kind: string }).kind !== "wechat",
+  );
   return {
     ...db,
-    settings: { ...db.settings, models },
+    settings: { ...db.settings, models, sources },
     items,
     profiles,
   };

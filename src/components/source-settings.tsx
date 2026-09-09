@@ -9,7 +9,6 @@ import {
   Target,
   Hash,
   Rss,
-  MessageCircle,
   ExternalLink,
 } from "lucide-react";
 import { Dashboard, Settings, Source } from "@/lib/domain";
@@ -214,9 +213,7 @@ export function SourceSettings({
             {form.sources.map((s) => (
               <div className="source-row" key={s.id}>
                 <span className={`source-icon ${s.kind}`}>
-                  {s.kind === "wechat" ? (
-                    <MessageCircle size={19} />
-                  ) : s.kind === "rss" ? (
+                  {s.kind === "rss" ? (
                     <Rss size={19} />
                   ) : (
                     <Globe2 size={19} />
@@ -247,11 +244,7 @@ export function SourceSettings({
                   />
                 </div>
                 <span className="source-type">
-                  {s.kind === "wechat"
-                    ? "微信公众号"
-                    : s.kind === "rss"
-                      ? "RSS"
-                      : "官方网站"}
+                  {s.kind === "rss" ? "RSS" : "官方网站"}
                 </span>
                 <button
                   role="switch"
@@ -293,7 +286,7 @@ export function SourceSettings({
                 <input
                   required
                   maxLength={100}
-                  placeholder="如：某企业官方公众号"
+                  placeholder="如：某企业新闻中心"
                   value={source.name}
                   onChange={(e) =>
                     setSource({ ...source, name: e.target.value })
@@ -312,7 +305,6 @@ export function SourceSettings({
                   }
                 >
                   <option value="website">网站主页 / 文章</option>
-                  <option value="wechat">微信公众号</option>
                   <option value="rss">RSS / Atom</option>
                 </select>
               </label>
@@ -334,7 +326,7 @@ export function SourceSettings({
               </button>
             </div>
             <p className="muted">
-              公众号请粘贴公开文章链接或可访问的主页链接；受限页面的采集情况会记录在智能体日志中。
+              支持公开网站、文章和 RSS；受限页面的采集情况会记录在智能体日志中。
             </p>
           </form>
         </fieldset>

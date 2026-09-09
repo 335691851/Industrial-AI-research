@@ -73,7 +73,7 @@ export const sourceSchema = z.object({
   id: z.string().max(100),
   name: z.string().trim().min(1).max(100),
   url: z.url().max(2000),
-  kind: z.enum(["website", "wechat", "rss"]),
+  kind: z.enum(["website", "rss"]),
   enabled: z.boolean(),
 });
 export const settingsSchema = z.object({

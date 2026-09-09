@@ -688,7 +688,7 @@ export async function executeRun(
           );
         if (!selected.length)
           throw new Error(
-            "未采集到可核验的正文，请检查来源网址或微信公众号文章链接。",
+            "未采集到可核验的正文，请检查网站、文章或 RSS 来源地址。",
           );
         await log(
           id,

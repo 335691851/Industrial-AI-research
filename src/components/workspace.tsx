@@ -208,11 +208,6 @@ export function Workspace() {
   const visibleCategories = categories.filter((value) =>
     items.some((item) => item.category === value),
   );
-  const names = {
-    intelligence: "情报展示",
-    sources: "来源配置",
-    agents: "智能体记录",
-  };
   return (
     <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${mobile ? "mobile-open" : ""}`}>
@@ -282,7 +277,7 @@ export function Workspace() {
                   {items.length.toString().padStart(2, "0")}
                 </span>
               ) : (
-                <ChevronRight size={14} />
+                <ArrowUpRight size={14} />
               )}
             </button>
           ))}
@@ -333,32 +328,16 @@ export function Workspace() {
         />
       )}
       <div className="main-shell">
-        <header className="topbar">
-          <div className="breadcrumb">
-            <button
-              aria-label="打开导航"
-              className="icon-button mobile-menu"
-              onClick={() => setMobile(!mobile)}
-            >
-              <Menu size={20} />
-            </button>
-            <Globe2 size={16} />
-            <span>全球工业智能导航</span>
-            <ChevronRight size={14} />
-            <strong>{names[view]}</strong>
-          </div>
-          <div className="topbar-right">
-            <span className="live-label">
-              <i />
-              RESEARCH WORKSPACE
-            </span>
-            <span className="topbar-divider" />
-            <span className="avatar small">AI</span>
-          </div>
-        </header>
         <main>
           <div className="page-heading">
             <div>
+              <button
+                aria-label="打开导航"
+                className="icon-button mobile-menu mobile-nav-trigger"
+                onClick={() => setMobile(!mobile)}
+              >
+                <Menu size={20} />
+              </button>
               <div className="eyebrow">
                 <span />
                 INDUSTRIAL INTELLIGENCE OBSERVATORY
@@ -469,7 +448,7 @@ export function Workspace() {
                         value: data.settings.sources.filter((s) => s.enabled)
                           .length,
                         icon: Globe2,
-                        note: "官网 · 研究平台 · 公众号",
+                        note: "官网 · 研究平台 · RSS",
                         color: "green",
                       },
                     ].map((m) => (

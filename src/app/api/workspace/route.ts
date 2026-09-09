@@ -29,11 +29,7 @@ export async function PUT(request: Request) {
       })
       .parse(JSON.parse(text));
     for (const source of body.settings.sources) {
-      const url = validateUrl(source.url);
-      if (source.kind === "wechat" && url.hostname !== "mp.weixin.qq.com")
-        throw new Error(
-          "微信公众号来源请使用 mp.weixin.qq.com 的文章链接或公开主页链接。",
-        );
+      validateUrl(source.url);
     }
     const encrypted = Object.fromEntries(
       await Promise.all(
