@@ -69,7 +69,7 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
             title: "工业智能体研究完成",
             summary: "来自真实测试夹具的可验证产品披露。",
             implication: "分析判断：关注产业应用。",
-            category: "产品方案",
+            category: "解决方案",
             topic: "工业智能",
             importance: "high",
             company: "测试公司",
@@ -86,8 +86,8 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
     assert.equal(state.items.length, 1);
     assert.equal(
       state.runs[0].status,
-      "partial",
-      "a run recovered with deterministic planning remains transparently partial",
+      "completed",
+      "successful publication is complete even when non-fatal warnings are logged",
     );
     assert.ok(state.runs[0].events.some((e) => e.node === "融合发布"));
     const safe = JSON.stringify(await dashboard());

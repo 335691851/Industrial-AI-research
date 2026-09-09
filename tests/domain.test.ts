@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { recentNews, mergeItems, mergeProfiles, topics } from "../src/lib/domain";
+import { recentIntelligence, mergeItems, mergeProfiles, prioritySignals, settingsSchema, topics } from "../src/lib/domain";
 import {
   publicAddress,
   validateUrl,
@@ -32,7 +32,7 @@ const baseItem = () => ({
   title: "工业智能平台发布",
   summary: "企业披露工业智能平台及面向制造现场的应用能力。",
   implication: "研究判断",
-  category: "产品方案" as const,
+  category: "解决方案" as const,
   topic: "工业智能" as const,
   importance: "high" as const,
   company: "测试公司",
@@ -55,25 +55,17 @@ const baseProfile = () => ({
   updatedAt: "2026-09-08T10:00:00Z",
 });
 
-test("news uses publication time, excludes unknown/future/older than 5 days", () => {
-  const base = { ...baseItem(), category: "行业新闻" as const };
+test("all intelligence uses a unified rolling 30-day effective window", () => {
+  const base = { ...baseItem(), category: "产业市场" as const };
   const now = new Date("2026-09-08T11:00:00Z");
   assert.equal(
-    recentNews({ ...base, publishedAt: "2026-09-03T11:00:00Z" }, now),
+    recentIntelligence({ ...base, publishedAt: "2026-08-09T11:00:00Z" }, now),
     true,
   );
-  for (const date of [
-    null,
-    "invalid",
-    "2026-09-03T10:59:59Z",
-    "2026-09-09T11:00:00Z",
-  ])
-    assert.equal(recentNews({ ...base, publishedAt: date }, now), false);
+  for (const date of ["invalid", "2026-08-09T10:59:59Z", "2026-09-09T11:00:00Z"])
+    assert.equal(recentIntelligence({ ...base, publishedAt: date }, now), false);
   assert.equal(
-    recentNews(
-      { ...base, category: "前沿研究", publishedAt: "2020-01-01" },
-      now,
-    ),
+    recentIntelligence({ ...base, publishedAt: null }, now),
     true,
   );
 });
@@ -155,6 +147,16 @@ test("parser takes explicit publication metadata, not current time", () => {
     null,
   );
 });
+test("major signals require confidence and evidence, then rank by quality", () => {
+  const evidence = [{ url: "https://example.com", title: "source", quote: "verified quote" }];
+  const critical = { ...baseItem(), importance: "critical" as const, confidence: 0.9, evidence };
+  const weak = { ...baseItem(), id: "weak", eventKey: "weak", confidence: 0.7, evidence };
+  assert.deepEqual(prioritySignals([weak, critical]).map((item) => item.id), [critical.id]);
+});
+test("settings reject unlisted model identifiers", () => {
+  assert.equal(settingsSchema.safeParse(defaultSettings).success, true);
+  assert.equal(settingsSchema.safeParse({ ...defaultSettings, models: { ...defaultSettings.models, deepseek: "deepseek-chat" } }).success, false);
+});
 test("discovery plan covers every configured target and site", () => {
   const plan = buildDiscoveryPlan(defaultSettings, "full");
   const lanes = new Set(plan.map((entry) => entry.lane));
@@ -201,8 +203,8 @@ test("Tavily discovery uses Advanced search, date scope and URL deduplication", 
       "2025-09-09",
       AbortSignal.timeout(5000),
     );
-    assert.equal(result.queryCount, 10);
-    assert.equal(result.resultCount, 20);
+    assert.equal(result.queryCount, 12);
+    assert.equal(result.resultCount, 24);
     assert.equal(result.deduplicatedCount, 1);
     assert.ok(
       requests.every(
@@ -224,7 +226,7 @@ test("grounding discards fabricated quotes and binds dates to verified documents
     title: "工业智能体发布新产品",
     summary: "发布可核验的工业智能体平台产品。",
     implication: "研究判断",
-    category: "产品方案",
+    category: "解决方案",
     topic: "工业智能",
     importance: "high",
     company: "测试公司",
@@ -302,7 +304,7 @@ test("normalizes DeepSeek-style aliases without weakening evidence requirements"
   });
   assert.ok(output.extraction);
   assert.equal(output.extraction!.items.length, 1);
-  assert.equal(output.extraction!.items[0].category, "产品方案");
+  assert.equal(output.extraction!.items[0].category, "产品发布");
   assert.equal(output.extraction!.items[0].topic, "工业智能");
   assert.equal(output.extraction!.items[0].importance, "critical");
   assert.equal(output.extraction!.items[0].confidence, 0.9);

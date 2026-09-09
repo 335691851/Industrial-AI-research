@@ -17,6 +17,8 @@ import {
   LayoutDashboard,
   Loader2,
   Menu,
+  PanelLeftClose,
+  PanelLeftOpen,
   Radio,
   RefreshCw,
   Search,
@@ -34,10 +36,12 @@ import {
   Settings,
   topics,
   categories,
+  prioritySignals,
 } from "@/lib/domain";
 import { SourceSettings } from "./source-settings";
 import { AgentPanel } from "./agent-panel";
-import { ActivityTrend, SignalMatrix } from "./charts";
+import { FieldTrend, HotKeywords, IndustryTrend } from "./charts";
+import { PriorityCarousel } from "./priority-carousel";
 import { Detail } from "./detail";
 
 type View = "intelligence" | "sources" | "agents";
@@ -63,6 +67,7 @@ export function Workspace() {
   const [category, setCategory] = useState("全部情报");
   const [detail, setDetail] = useState<Item | Profile | null>(null);
   const [mobile, setMobile] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sort, setSort] = useState("importance");
   const [accessToken, setAccessToken] = useState("");
   const [unlockOpen, setUnlockOpen] = useState(false);
@@ -87,6 +92,7 @@ export function Workspace() {
   }, [accessToken]);
   useEffect(() => {
     setAccessToken(sessionStorage.getItem("workspace-access-token") ?? "");
+    setSidebarCollapsed(localStorage.getItem("sidebar-collapsed") === "true");
   }, []);
   useEffect(() => {
     void load();
@@ -198,14 +204,17 @@ export function Workspace() {
             a.publishedAt ?? a.observedAt,
           ),
     );
-  const highlights = items.filter((i) => i.importance !== "normal").slice(0, 3);
+  const highlights = prioritySignals(items);
+  const visibleCategories = categories.filter((value) =>
+    items.some((item) => item.category === value),
+  );
   const names = {
     intelligence: "情报展示",
     sources: "来源配置",
     agents: "智能体记录",
   };
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
       <aside className={`sidebar ${mobile ? "mobile-open" : ""}`}>
         <a className="brand" href="/" aria-label="全球工业智能导航首页">
           <span className="brand-mark">
@@ -223,6 +232,18 @@ export function Workspace() {
             </strong>
           </span>
         </a>
+        <button
+          className="sidebar-toggle"
+          aria-label={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+          title={sidebarCollapsed ? "展开侧栏" : "收起侧栏"}
+          onClick={() => {
+            const next = !sidebarCollapsed;
+            setSidebarCollapsed(next);
+            localStorage.setItem("sidebar-collapsed", String(next));
+          }}
+        >
+          {sidebarCollapsed ? <PanelLeftOpen size={17} /> : <PanelLeftClose size={17} />}
+        </button>
         <div className="workspace-label">RESEARCH WORKSPACE</div>
         <nav>
           {[
@@ -249,6 +270,7 @@ export function Workspace() {
               key={id}
               className={`nav-item ${view === id ? "active" : ""}`}
               onClick={() => navigate(id)}
+              title={name}
             >
               <Icon size={19} />
               <span>
@@ -425,18 +447,14 @@ export function Workspace() {
                         label: "当前研究情报",
                         value: items.length,
                         icon: Radio,
-                        note: "新闻限定最近 5 天",
+                        note: "最近 30 天有效情报",
                         color: "orange",
                       },
                       {
                         label: "重大信号",
-                        value: items.filter(
-                          (i) =>
-                            i.importance === "critical" ||
-                            i.importance === "high",
-                        ).length,
+                        value: highlights.length,
                         icon: Zap,
-                        note: "优先关注的产业变化",
+                        note: "重要度 × 可信度 × 多源证据",
                         color: "purple",
                       },
                       {
@@ -488,60 +506,35 @@ export function Workspace() {
                       </h2>
                       <span className="subtle">重大信息 · 核心提炼</span>
                     </div>
-                    <div className="highlight-grid">
-                      {highlights.map((item, i) => (
-                        <button
-                          key={item.id}
-                          className={`highlight-card highlight-${i}`}
-                          onClick={() => setDetail(item)}
-                        >
-                          <div className="highlight-top">
-                            <span
-                              className={`priority-badge ${item.importance}`}
-                            >
-                              {item.importance === "critical"
-                                ? "重大信号"
-                                : "重点关注"}
-                            </span>
-                            <ArrowUpRight size={19} />
-                          </div>
-                          <h3>{item.title}</h3>
-                          <p>{item.summary}</p>
-                          <div className="highlight-bottom">
-                            <span>{item.company}</span>
-                            <span>{item.topic}</span>
-                          </div>
-                        </button>
-                      ))}
-                      {!highlights.length && (
-                        <div className="empty-state">
-                          <ShieldCheck />
-                          <p>暂未发现重大信号</p>
-                          <small>高优先级的可核验情报会在这里呈现。</small>
-                        </div>
-                      )}
-                    </div>
+                    <PriorityCarousel items={highlights} onSelect={setDetail} />
                   </section>
-                  <div className="analytics-grid">
+                  <div className="analytics-grid trend-analytics">
                     <section className="panel">
                       <div className="panel-heading">
                         <h2>
                           <TrendingUp size={17} />
-                          情报活跃趋势
+                          行业趋势
                         </h2>
-                        <span className="subtle">近 7 天 · 动态主题</span>
+                        <span className="subtle">近 30 天 · 信号强度</span>
                       </div>
-                      <ActivityTrend items={items} />
+                      <IndustryTrend items={items} />
                     </section>
                     <section className="panel">
                       <div className="panel-heading">
                         <h2>
                           <Boxes size={17} />
-                          热点信号矩阵
+                          热点热词
                         </h2>
-                        <span className="subtle">动态主题 × 情报类型</span>
+                        <span className="subtle">从当前语料动态提取</span>
                       </div>
-                      <SignalMatrix items={items} onTopic={setTopic} />
+                      <HotKeywords items={items} keywords={data.settings.keywords} onSelect={setQuery} />
+                    </section>
+                    <section className="panel">
+                      <div className="panel-heading">
+                        <h2><Activity size={17} />领域趋势</h2>
+                        <span className="subtle">7 天动量</span>
+                      </div>
+                      <FieldTrend items={items} onTopic={setTopic} />
                     </section>
                   </div>
                   <div className="content-grid">
@@ -585,14 +578,14 @@ export function Workspace() {
                         </select>
                       </div>
                       <div className="category-tabs">
-                        {["全部情报", ...categories].map((c) => (
+                        {["全部情报", ...visibleCategories].map((c) => (
                           <button
                             key={c}
                             className={category === c ? "selected" : ""}
                             onClick={() => setCategory(c)}
                           >
                             {c}
-                            {c === "全部情报" && <span>{items.length}</span>}
+                            <span>{c === "全部情报" ? items.length : items.filter((item) => item.category === c).length}</span>
                           </button>
                         ))}
                       </div>
@@ -676,8 +669,7 @@ export function Workspace() {
                         )}
                       </div>
                       <div className="feed-end">
-                        — 已展示 {filtered.length} 条情报 · 新闻窗口 5
-                        天，研究档案持续积累 —
+                        — 已展示 {filtered.length} 条情报 · 最近 30 天滚动窗口 —
                       </div>
                     </section>
                     <aside className="research-rail">
@@ -702,7 +694,9 @@ export function Workspace() {
                               <div>
                                 <strong>{p.name}</strong>
                                 <small>
-                                  已核验原文引用
+                                  {data.settings.companies.some((name) => name.replace(/\s+/g, "").toLowerCase() === p.name.replace(/\s+/g, "").toLowerCase())
+                                    ? "已配置 · 持续刷新"
+                                    : "研究发现 · 动态关注"}
                                 </small>
                               </div>
                               <ArrowUpRight size={16} />
@@ -835,9 +829,9 @@ export function Workspace() {
   );
 }
 function TopicIcon({ category }: { category: string }) {
-  if (category === "前沿研究") return <Sparkles size={21} />;
-  if (category === "投融资") return <TrendingUp size={21} />;
-  if (category === "产品方案") return <Boxes size={21} />;
-  if (category === "重大成果") return <Zap size={21} />;
+  if (category === "技术前沿") return <Sparkles size={21} />;
+  if (category === "资本动态") return <TrendingUp size={21} />;
+  if (category === "解决方案" || category === "产品发布") return <Boxes size={21} />;
+  if (category === "企业战略") return <Target size={21} />;
   return <Activity size={21} />;
 }

@@ -158,7 +158,7 @@ export function AgentPanel({
                 </span>
                 <label>
                   模型名称
-                  <input
+                  <select
                     value={form.models[id]}
                     onChange={(e) =>
                       update({
@@ -166,7 +166,14 @@ export function AgentPanel({
                       })
                     }
                     aria-label={`${p.name} 模型名称`}
-                  />
+                  >
+                    {p.models.map((model) => (
+                      <option value={model.id} key={model.id}>
+                        {model.label} · {model.id}
+                      </option>
+                    ))}
+                  </select>
+                  <small className="model-hint">仅允许已校验的兼容模型标识</small>
                 </label>
                 <label>
                   API Key
@@ -331,7 +338,7 @@ export function AgentPanel({
             <h3>第一份洞察，从一次研究开始</h3>
             <p>保存模型密钥后发起研究，过程与结果将在这里记录。</p>
             <small>
-              手动全量重研覆盖最近一年；每日增量研究由系统在 19:00 自动执行。
+              手动全量重研覆盖最近 30 天；每日增量研究由系统在 19:00 自动执行，并滚动剔除第 31 天以前的数据。
             </small>
           </div>
         )}
