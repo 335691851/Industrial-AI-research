@@ -627,7 +627,9 @@ export async function executeRun(
               docs.push(...accepted.map((page) => ({ ...page, source: `企业官网 · ${name}`, profileCompany: name })));
               stats.read += pages.length;
               const dynamicCount = accepted.filter((page) => page.retrievalMethod === "advanced-extract").length;
-              await log(id, "企业官网研究", `${name}：读取 ${pages.length} 份官网资料，接纳 ${accepted.length} 份${dynamicCount ? `（高级动态正文提取 ${dynamicCount} 份）` : ""}；不受新闻 30 天窗口限制。`, accepted.length ? "ok" : "warning");
+              const homepageFallbacks = accepted.filter((page) => page.retrievalMethod === "official-homepage-fallback").length;
+              const methods = [dynamicCount ? `动态页面 ${dynamicCount}` : "", homepageFallbacks ? `官网首页兜底 ${homepageFallbacks}` : ""].filter(Boolean).join("、");
+              await log(id, "企业官网研究", `${name}：读取 ${pages.length} 份官网资料，接纳 ${accepted.length} 份${methods ? `（${methods}）` : ""}；不受新闻 30 天窗口限制。`, accepted.length ? "ok" : "warning");
             } catch (error) {
               stats.failed++;
               await log(id, "企业官网研究", `${name}：${publicError(error)}，保留已有有效画像。`, "warning");

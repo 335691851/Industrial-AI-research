@@ -5,7 +5,7 @@ import { evidenceUrl } from "../src/lib/identity";
 
 const url = "https://www.xuelangyun.com/#/about/xly";
 const shell = '<html><head><title>关于雪浪云</title></head><body><noscript>Enable JavaScript to continue.</noscript><div id="app"></div><script src="/app.js"></script></body></html>';
-const text = "这是一段用于验证动态正文提取的企业公开资料，不会写入真实数据库。".repeat(10);
+const text = "雪浪数制是一家用于验证动态正文提取的企业，本段公开资料不会写入真实数据库。".repeat(10);
 
 test("hash routes retain page and evidence identity while ordinary anchors are removed", () => {
   for (const normalize of [canonicalUrl, evidenceUrl]) {
@@ -70,10 +70,16 @@ test("dynamic fallback is bounded, route-specific, and never used to bypass rest
   // A hash route must be extracted even when server HTML contains a populated homepage.
   await parseSourcePage({ url, html: `<body>${text}</body>` }, "官网", signal);
   assert.equal(calls, 2);
-  for (const wrongUrl of ["https://www.xuelangyun.com/", "https://evil.example/#/about/xly", "http://127.0.0.1/"]) {
+  for (const wrongUrl of ["https://evil.example/#/about/xly", "http://127.0.0.1/"]) {
     resultUrl = wrongUrl;
     await assert.rejects(parseSourcePage({ url, html: shell }, "官网", signal), /未返回对应页面/);
   }
+  resultUrl = "https://www.xuelangyun.com/";
+  const homepage = await parseSourcePage({ url, html: shell }, "雪浪数制", signal, "雪浪数制");
+  assert.equal(homepage.document.url, "https://www.xuelangyun.com/");
+  assert.equal(homepage.document.retrievalMethod, "official-homepage-fallback");
+  content = "另一家企业的官网首页内容。".repeat(20);
+  await assert.rejects(parseSourcePage({ url, html: shell }, "雪浪数制", signal, "雪浪数制"), /未明确包含目标企业身份/);
   resultUrl = url;
   content = "请完成验证";
   await assert.rejects(parseSourcePage({ url, html: shell }, "官网", signal), /访问验证/);

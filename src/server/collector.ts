@@ -4,7 +4,7 @@ import ipaddr from "ipaddr.js";
 import { Agent, fetch as secureFetch } from "undici";
 import * as cheerio from "cheerio";
 import { Run, Source, Settings, topics } from "@/lib/domain";
-import { belongsToWebsite, normalizePageFragment } from "@/lib/identity";
+import { belongsToWebsite, identityText, normalizePageFragment } from "@/lib/identity";
 
 export type Document = {
   url: string;
@@ -13,7 +13,7 @@ export type Document = {
   publishedAt: string | null;
   source: string;
   profileCompany?: string;
-  retrievalMethod?: "html" | "advanced-extract";
+  retrievalMethod?: "html" | "advanced-extract" | "official-homepage-fallback";
 };
 export class SourceContentError extends Error {
   constructor(public readonly reason: "dynamic" | "empty" | "restricted", message: string) {
@@ -212,7 +212,7 @@ function assertNotRestricted(text: string) {
 }
 
 // Only called after the URL has passed the pinned-DNS fetch and returned a public page.
-export async function extractDynamicPage(page: { html: string; url: string }, source: string, signal: AbortSignal): Promise<Document> {
+export async function extractDynamicPage(page: { html: string; url: string }, source: string, signal: AbortSignal, officialCompany?: string): Promise<Document> {
   signal.throwIfAborted();
   const target = canonicalUrl(page.url);
   if (!process.env.TAVILY_API_KEY)
@@ -239,27 +239,44 @@ export async function extractDynamicPage(page: { html: string; url: string }, so
     chunks.push(value);
   }
   const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { results?: { url?: unknown; raw_content?: unknown }[] };
+  let fallback = false;
   const result = Array.isArray(body.results) ? body.results.find((entry) => {
     if (typeof entry.url !== "string") return false;
-    try { return canonicalUrl(entry.url) === target; } catch { return false; }
+    try {
+      const returned = canonicalUrl(entry.url);
+      if (returned === target) return true;
+      const targetUrl = new URL(target);
+      const returnedUrl = new URL(returned);
+      const targetWithoutFragment = new URL(target);
+      targetWithoutFragment.hash = "";
+      fallback = Boolean(
+        officialCompany && /^#!?\//.test(targetUrl.hash) &&
+        returned === canonicalUrl(targetWithoutFragment.toString()) &&
+        returnedUrl.origin === targetUrl.origin,
+      );
+      return fallback;
+    } catch { return false; }
   }) : undefined;
   if (!result) throw new Error("动态正文提取未返回对应页面；未将其他页面或首页内容作为该页面证据。");
   const text = typeof result.raw_content === "string" ? result.raw_content.replace(/\s+/g, " ").trim().slice(0, 10000) : "";
   assertNotRestricted(text);
   if (text.length < 120 || /without javascript|please enable javascript/i.test(text.slice(0, 500)))
     throw new Error("动态页面高级提取仍未取得有效正文，保留已有资料并等待后续刷新。");
+  if (fallback && (!officialCompany || !identityText(text).includes(identityText(officialCompany))))
+    throw new Error("动态路由仅返回官网首页，且正文未明确包含目标企业身份；未将首页作为该企业证据。");
   const $ = cheerio.load(page.html);
-  return { url: target, title: ($('meta[property="og:title"]').attr("content") || $("title").text() || source).trim().slice(0, 300), text, publishedAt: null, source, retrievalMethod: "advanced-extract" };
+  const returnedUrl = typeof result.url === "string" ? canonicalUrl(result.url) : target;
+  return { url: fallback ? returnedUrl : target, title: ($('meta[property="og:title"]').attr("content") || $("title").text() || source).trim().slice(0, 300), text, publishedAt: null, source, retrievalMethod: fallback ? "official-homepage-fallback" : "advanced-extract" };
 }
 
 export async function readSourcePage(value: string, source: string, signal: AbortSignal, officialWebsite?: string) {
   const page = await fetchPage(value, signal);
   if (officialWebsite && !belongsToWebsite(page.url, officialWebsite))
     throw new Error("企业官网跳转到其他域名，请核对官网地址。");
-  return parseSourcePage(page, source, signal);
+  return parseSourcePage(page, source, signal, officialWebsite ? source : undefined);
 }
 
-export async function parseSourcePage(page: { html: string; url: string }, source: string, signal: AbortSignal) {
+export async function parseSourcePage(page: { html: string; url: string }, source: string, signal: AbortSignal, officialCompany?: string) {
   let parsed: ReturnType<typeof parsePage> | undefined;
   try { parsed = parsePage(page.html, page.url, source); }
   catch (error) {
@@ -267,7 +284,7 @@ export async function parseSourcePage(page: { html: string; url: string }, sourc
   }
   // Even a populated HTML shell cannot prove the requested client-side route was rendered.
   if (parsed && !/^#!?\//.test(new URL(page.url).hash)) return parsed;
-  return { document: await extractDynamicPage(page, source, signal), links: parsed?.links ?? [] };
+  return { document: await extractDynamicPage(page, source, signal, officialCompany), links: parsed?.links ?? [] };
 }
 export async function collectSource(
   source: Source,
@@ -309,7 +326,7 @@ export async function collectSource(
   const official = source.id.startsWith("official-company:");
   if (official && !belongsToWebsite(page.url, source.url))
     throw new Error("企业官网跳转到其他域名，请核对官网地址。");
-  const parsed = await parseSourcePage(page, source.name, signal);
+  const parsed = await parseSourcePage(page, source.name, signal, official ? source.name : undefined);
   const docs = [parsed.document];
   const links = official
     ? parsed.links.filter((link) => /about|company|product|solution|technolog|capabilit/i.test(link))
