@@ -430,7 +430,7 @@ export function Workspace() {
                         label: "当前研究情报",
                         value: items.length,
                         icon: Radio,
-                        note: "最近 30 天有效情报",
+                        note: "最近一次研究发布快照",
                         color: "orange",
                       },
                       {
@@ -618,7 +618,7 @@ export function Workspace() {
                         )}
                       </div>
                       <div className="feed-end">
-                        — 已展示 {filtered.length} 条情报 · 最近 30 天滚动窗口 —
+                        — 已展示 {filtered.length} 条情报 · 最近一次研究发布快照 —
                       </div>
                     </section>
                     <aside className="research-rail">

@@ -12,7 +12,7 @@ import {
 import { defaultSettings } from "../src/lib/seed";
 import { normalizeItemDate, effectiveDate, rebuildItems } from "../src/lib/domain";
 import { currentInsights, validateInsights } from "../src/server/synthesis";
-import { dashboardProfiles } from "../src/server/store";
+import { dashboardProfiles, publishedSnapshot } from "../src/server/store";
 import { emptyDatabase } from "../src/lib/seed";
 import {
   extractionSchema,
@@ -72,6 +72,24 @@ test("all intelligence uses a unified rolling 30-day effective window", () => {
     recentIntelligence({ ...base, publishedAt: null }, now),
     true,
   );
+});
+
+test("dashboard keeps the last published snapshot stable until the next research publication", () => {
+  const now = new Date("2026-09-10T12:00:00Z");
+  const expiredAfterPublication = normalizeItemDate({
+    ...baseItem(),
+    publishedAt: "2026-08-11T00:00:00Z",
+    observedAt: "2026-09-09T11:00:00Z",
+  });
+  assert.equal(recentIntelligence(expiredAfterPublication, now), false);
+  const stored = [expiredAfterPublication];
+  const firstRead = publishedSnapshot({ items: stored, insights: undefined });
+  const laterRead = publishedSnapshot({ items: stored, insights: undefined });
+  assert.equal(firstRead.items.length, 1);
+  assert.equal(laterRead.items.length, 1);
+  assert.equal(laterRead.items, stored);
+  // The following successful publish evaluates the window and removes it.
+  assert.equal(mergeItems(stored, []).filter((item) => recentIntelligence(item, now)).length, 0);
 });
 
 test("Sony Aramco bilingual headlines collapse across event keys and categories", () => {

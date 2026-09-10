@@ -8,8 +8,6 @@ import {
   Profile,
   normalizeCategory,
   providers,
-  recentIntelligence,
-  mergeItems,
   mergeProfiles,
   normalizeItemDate,
 } from "@/lib/domain";
@@ -92,6 +90,12 @@ export function dashboardProfiles(db: Database, now = new Date()) {
     } satisfies Profile;
   });
   return [...configured, ...byName.values()];
+}
+export function publishedSnapshot(db: Pick<Database, "items" | "insights">) {
+  // The dashboard is a published research snapshot. Retention and deduplication
+  // run atomically in the publish node, never as a side effect of page reads.
+  const items = db.items;
+  return { items, insights: currentInsights(db.insights, items) };
 }
 async function cloudRow() {
   const db = client();
@@ -205,14 +209,14 @@ export async function dashboard(editable = false): Promise<Dashboard> {
     });
     db = await readDatabase();
   }
-  const items = mergeItems([], db.items).filter((i) => recentIntelligence(i));
+  const snapshot = publishedSnapshot(db);
   return {
-    insights: currentInsights(db.insights, items),
+    insights: snapshot.insights,
     settings: db.settings,
     configured: Object.fromEntries(
       Object.entries(db.credentials).map(([k, v]) => [k, Boolean(v)]),
     ),
-    items,
+    items: snapshot.items,
     profiles: dashboardProfiles(db),
     runs: db.runs.slice(-40).reverse(),
     storage: isCloud() ? "supabase" : "local",
