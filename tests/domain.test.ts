@@ -17,6 +17,7 @@ import { emptyDatabase } from "../src/lib/seed";
 import { assessIntelligence } from "../src/lib/quality";
 import {
   extractionSchema,
+  fairDiscoveryCandidates,
   groundExtraction,
   normalizeExtraction,
 } from "../src/server/research";
@@ -369,6 +370,19 @@ test("discovery plan covers every configured target and site", () => {
       /融资|投资|并购/.test(entry.query)));
   assert.ok(plan.some((entry) => entry.coverageKey === "物理AI技术前沿" && entry.searchDepth === "advanced"));
   assert.ok(plan.some((entry) => entry.coverageKey === "产业市场" && entry.sourceScope === "primary"));
+  for (const key of ["全球工业龙头合作", "科技平台制造合作", "中国科技制造龙头", "工业软件生态合作"])
+    assert.ok(plan.some((entry) => entry.coverageKey === key && entry.sourceScope === "primary"));
+});
+test("discovery reading order reserves 40% for industry and caps focus-company material near 30%", () => {
+  const lanes = ["常规行业扫描", "重点企业追踪", "配置关键词扩展", "指定网站发现", "自主规划补充"] as const;
+  const candidates = lanes.flatMap((lane) => Array.from({ length: 40 }, (_, index) => ({
+    lane, coverageKey: `${lane}-${index % 8}`, query: `${lane}-${index}`,
+    topic: "news" as const, url: `https://example.com/${lane}/${index}`,
+  })));
+  const first = fairDiscoveryCandidates(candidates).slice(0, 50);
+  assert.equal(first.filter((entry) => entry.lane === "常规行业扫描").length, 20);
+  assert.equal(first.filter((entry) => entry.lane === "重点企业追踪").length, 15);
+  assert.equal(first.filter((entry) => entry.lane === "配置关键词扩展").length, 5);
 });
 test("Tavily discovery uses cost-aware mixed depth, trusted-domain filtering and URL deduplication", async () => {
   const originalFetch = globalThis.fetch;
@@ -395,8 +409,8 @@ test("Tavily discovery uses cost-aware mixed depth, trusted-domain filtering and
       "2025-09-09",
       AbortSignal.timeout(5000),
     );
-    assert.equal(result.queryCount, 14);
-    assert.equal(result.resultCount, 28);
+    assert.equal(result.queryCount, 18);
+    assert.equal(result.resultCount, 36);
     assert.equal(result.deduplicatedCount, 1);
     assert.equal(result.estimatedCredits, result.basicQueryCount + result.advancedQueryCount * 2);
     assert.ok(result.basicQueryCount > result.advancedQueryCount);

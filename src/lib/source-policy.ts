@@ -18,6 +18,12 @@ const additionalCompanyDomains = [
   "abb.com", "se.com", "rockwellautomation.com", "honeywell.com",
   "autodesk.com", "ansys.com", "aveva.com", "hexagon.com",
   "microsoft.com", "ibm.com", "aws.amazon.com", "research.google",
+  "bosch.com", "ge.com", "gevernova.com", "sap.com", "oracle.com",
+  "palantir.com", "fanuc.co.jp", "yaskawa-global.com", "kuka.com",
+  "mitsubishielectric.com", "omron.com", "hitachi.com",
+  "huawei.com", "baidu.com", "alibabacloud.com", "aliyun.com",
+  "tencent.com", "haier.com", "cosmoplat.com", "sanyglobal.com",
+  "xcmg.com", "midea.com",
 ];
 
 // Accountable newsrooms and selected specialist industrial publishers expand

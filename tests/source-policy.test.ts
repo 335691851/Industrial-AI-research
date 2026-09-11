@@ -67,7 +67,7 @@ test("published portfolio caps company concentration and retains available focus
   });
   const items = [...Array.from({ length: 9 }, (_, index) => make("浩辰软件", index)), make("雪浪数制", 20), make("蜂巢互联", 21)];
   const result = balancePublishedIntelligence(items, { companies: ["浩辰软件", "雪浪数制", "蜂巢互联"] });
-  assert.equal(result.filter((item) => item.company === "浩辰软件").length, 5);
+  assert.equal(result.filter((item) => item.company === "浩辰软件").length, 3);
   assert.ok(result.some((item) => item.company === "雪浪数制"));
   assert.ok(result.some((item) => item.company === "蜂巢互联"));
 });

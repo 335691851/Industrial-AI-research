@@ -118,7 +118,7 @@ export function filterPublishableIntelligence(
 export function balancePublishedIntelligence(
   items: Item[],
   settings: Pick<Settings, "companies">,
-  max = 72,
+  max = 54,
 ) {
   const focusKeys = new Set(settings.companies.map(identityText));
   const ranked = [...items].sort((a, b) => priorityScore(b) - priorityScore(a));
@@ -127,12 +127,12 @@ export function balancePublishedIntelligence(
   const companyCounts = new Map<string, number>();
   const categoryCounts = new Map<string, number>();
   const companyKey = (item: Item) => identityText(item.company || "行业") || "行业";
-  const companyCap = (key: string) => key === "行业" ? 14 : focusKeys.has(key) ? 5 : 3;
+  const companyCap = (key: string) => key === "行业" ? 18 : focusKeys.has(key) ? 3 : 2;
   const canAdd = (item: Item) => {
     const key = companyKey(item);
     return !selectedIds.has(item.id) &&
       (companyCounts.get(key) ?? 0) < companyCap(key) &&
-      (categoryCounts.get(item.category) ?? 0) < 16;
+      (categoryCounts.get(item.category) ?? 0) < 14;
   };
   const add = (item: Item) => {
     if (selected.length >= max || !canAdd(item)) return;

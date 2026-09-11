@@ -344,7 +344,7 @@ function agentQueries(value: unknown, lane: DiscoveryQuery["lane"]) {
   if (!parsed.success) return { strategy: "使用确定性覆盖计划。", queries: [] };
   return {
     strategy: parsed.data.strategy,
-    queries: parsed.data.queries.map((entry) => ({ ...entry, lane })),
+    queries: parsed.data.queries.slice(0, 6).map((entry) => ({ ...entry, lane })),
   };
 }
 function withinWindow(document: Document, startDate: string) {
@@ -370,18 +370,47 @@ function selectFair(documents: Document[], max = 100) {
   return { unique, selected: [...official, ...selected.filter((document) => !document.profileCompany)].slice(0, max) };
 }
 
-function fairDiscoveryCandidates(candidates: DiscoveryResult["candidates"]) {
-  const groups = new Map<string, typeof candidates>();
-  for (const candidate of candidates) {
-    const key = `${candidate.priority ?? 0}:${candidate.coverageKey}`;
-    groups.set(key, [...(groups.get(key) ?? []), candidate]);
+export function fairDiscoveryCandidates(candidates: DiscoveryResult["candidates"]) {
+  const lanes: DiscoveryQuery["lane"][] = [
+    "常规行业扫描",
+    "重点企业追踪",
+    "配置关键词扩展",
+    "指定网站发现",
+    "自主规划补充",
+  ];
+  const weights: Record<DiscoveryQuery["lane"], number> = {
+    常规行业扫描: 4,
+    重点企业追踪: 3,
+    配置关键词扩展: 1,
+    指定网站发现: 1,
+    自主规划补充: 1,
+  };
+  const laneQueues = new Map<DiscoveryQuery["lane"], typeof candidates>();
+  for (const lane of lanes) {
+    const groups = new Map<string, typeof candidates>();
+    for (const candidate of candidates.filter((entry) => entry.lane === lane))
+      groups.set(candidate.coverageKey, [
+        ...(groups.get(candidate.coverageKey) ?? []),
+        candidate,
+      ]);
+    const queue: typeof candidates = [];
+    const orderedGroups = [...groups.values()];
+    while (orderedGroups.some((group) => group.length))
+      for (const group of orderedGroups) if (group.length) queue.push(group.shift()!);
+    laneQueues.set(lane, queue);
   }
-  const orderedGroups = [...groups.entries()]
-    .sort(([a], [b]) => Number(b.split(":", 1)[0]) - Number(a.split(":", 1)[0]))
-    .map(([, group]) => group);
   const result: typeof candidates = [];
-  while (orderedGroups.some((group) => group.length))
-    for (const group of orderedGroups) if (group.length) result.push(group.shift()!);
+  while ([...laneQueues.values()].some((queue) => queue.length)) {
+    let progressed = false;
+    for (const lane of lanes) {
+      const queue = laneQueues.get(lane)!;
+      for (let take = 0; take < weights[lane] && queue.length; take++) {
+        result.push(queue.shift()!);
+        progressed = true;
+      }
+    }
+    if (!progressed) break;
+  }
   return result;
 }
 
@@ -688,7 +717,7 @@ export async function executeRun(
                   },
                 ],
               },
-              limits: { extraQueries: 12 },
+              limits: { extraQueries: 6 },
             }),
             signal,
           );
@@ -832,34 +861,69 @@ export async function executeRun(
           throw new Error(
             "未采集到可核验的正文，请检查网站、文章或 RSS 来源地址。",
           );
+        const laneDistribution = [
+          "常规行业扫描",
+          "重点企业追踪",
+          "配置关键词扩展",
+          "指定网站发现",
+          "自主规划补充",
+        ].map((lane) => `${lane} ${selected.filter((document) =>
+          document.source.startsWith(lane)).length} 份`).join("、");
         await log(
           id,
           "采集汇总",
-          `搜索范围自 ${state.startDate} 起；共执行 ${stats.queryCount} 个搜索问题，搜索结果 ${stats.searchResults} 条，搜索 URL 去重后 ${stats.deduplicated} 条，成功读取正文 ${stats.read} 份，正文去重与时间筛选后有效内容 ${stats.effective} 份，最终 ${selected.length} 份进入覆盖检查。`,
+          `搜索范围自 ${state.startDate} 起；共执行 ${stats.queryCount} 个搜索问题，搜索结果 ${stats.searchResults} 条，搜索 URL 去重后 ${stats.deduplicated} 条，成功读取正文 ${stats.read} 份，正文去重与时间筛选后有效内容 ${stats.effective} 份，最终 ${selected.length} 份进入覆盖检查。材料分布：${laneDistribution}；企业官网画像材料 ${selected.filter((document) => document.profileCompany).length} 份。`,
         );
         return { documents: selected, sourceStats: stats };
       })
       .addNode("coverage", async (state) => {
+        const deterministicPlan = buildDiscoveryPlan(state.settings, state.mode);
         const missingCompanies = state.settings.companies.filter(
           (company) => companyDocumentCount(state.documents, company) === 0,
         );
         const missingKeys = new Set(missingCompanies.map(identityText));
         const queriesByCompany = new Map<string, DiscoveryQuery[]>();
-        for (const entry of buildDiscoveryPlan(state.settings, state.mode)
+        for (const entry of deterministicPlan
           .filter((candidate) => candidate.focusCompany &&
             missingKeys.has(identityText(candidate.focusCompany)))) {
           const key = identityText(entry.focusCompany!);
           queriesByCompany.set(key, [...(queriesByCompany.get(key) ?? []), entry]
             .sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0)));
         }
-        const mandatoryQueries: DiscoveryQuery[] = [];
-        while (mandatoryQueries.length < 12 &&
+        const companyQueries: DiscoveryQuery[] = [];
+        while (companyQueries.length < 12 &&
           [...queriesByCompany.values()].some((entries) => entries.length))
           for (const company of missingCompanies) {
             const entries = queriesByCompany.get(identityText(company));
-            if (entries?.length && mandatoryQueries.length < 12)
-              mandatoryQueries.push({ ...entries.shift()!, lane: "自主规划补充" });
+            if (entries?.length && companyQueries.length < 12)
+              companyQueries.push({ ...entries.shift()!, lane: "自主规划补充" });
           }
+        const thematicTargets = [
+          "物理AI技术前沿",
+          "工业智能衍生技术",
+          "产业市场",
+          "全球产业政策",
+          "全球工业龙头合作",
+          "科技平台制造合作",
+          "中国科技制造龙头",
+          "工业软件生态合作",
+          "资本市场",
+        ];
+        const thematicGaps = thematicTargets.filter((coverageKey) =>
+          state.documents.filter((document) =>
+            document.source.includes(`· ${coverageKey}`)).length < 3);
+        const thematicQueries = thematicGaps.flatMap((coverageKey) => {
+          const entry = deterministicPlan.find((candidate) =>
+            candidate.coverageKey === coverageKey);
+          return entry ? [{ ...entry, lane: "自主规划补充" as const }] : [];
+        });
+        const mandatoryQueries: DiscoveryQuery[] = [];
+        while (mandatoryQueries.length < 12 &&
+          (companyQueries.length || thematicQueries.length)) {
+          if (companyQueries.length) mandatoryQueries.push(companyQueries.shift()!);
+          if (thematicQueries.length && mandatoryQueries.length < 12)
+            mandatoryQueries.push(thematicQueries.shift()!);
+        }
         if (!process.env.TAVILY_API_KEY) {
           await log(
             id,
@@ -903,6 +967,7 @@ export async function executeRun(
                 company,
                 eventDocuments: companyDocumentCount(state.documents, company),
               })),
+              deterministicGaps: thematicGaps,
               outputShape: {
                 sufficient: false,
                 gaps: ["缺失的覆盖目标"],
@@ -934,8 +999,8 @@ export async function executeRun(
             "覆盖检查",
             !supplementalQueries.length
               ? "Agent 判断当前材料已满足本轮覆盖要求。"
-              : `重点企业未覆盖 ${missingCompanies.length} 家${missingCompanies.length ? `（${missingCompanies.join("、")}）` : ""}；结合 Agent 的 ${parsed.data.gaps.length} 个主题缺口，生成 ${supplementalQueries.length} 个定向补充问题。`,
-            missingCompanies.length ? "warning" : "ok",
+              : `重点企业零覆盖 ${missingCompanies.length} 家${missingCompanies.length ? `（${missingCompanies.join("、")}）` : ""}；政府、技术、龙头合作等确定性覆盖缺口 ${thematicGaps.length} 项${thematicGaps.length ? `（${thematicGaps.join("、")}）` : ""}；结合 Agent 审查后生成 ${supplementalQueries.length} 个定向补充问题。`,
+            missingCompanies.length || thematicGaps.length ? "warning" : "ok",
           );
           return { supplementalQueries };
         } catch (error) {
@@ -943,7 +1008,7 @@ export async function executeRun(
             id,
             "覆盖检查",
             mandatoryQueries.length
-              ? `Agent 覆盖审查失败，仍执行 ${mandatoryQueries.length} 个重点企业确定性补搜问题：${publicError(error)}`
+              ? `Agent 覆盖审查失败，仍执行 ${mandatoryQueries.length} 个重点企业与主题确定性补搜问题：${publicError(error)}`
               : `覆盖审查未生成补充计划，继续使用已采集材料：${publicError(error)}`,
             "warning",
           );
@@ -1045,6 +1110,7 @@ export async function executeRun(
                   EXTRACTION_BATCH_SIZE,
                   documents.filter((document) => !document.profileCompany).length,
                 );
+                const targetItems = Math.min(itemLimit, Math.ceil(itemLimit * 0.7));
                 const prompt = JSON.stringify({
                   mode: state.mode,
                   researchWindowStart: state.startDate,
@@ -1058,6 +1124,7 @@ export async function executeRun(
                   },
                   limits: {
                     items: itemLimit,
+                    targetItems,
                     profiles: targetNames.length,
                     evidencePerRecord: 2,
                     summaryCharacters: 180,
@@ -1074,6 +1141,7 @@ export async function executeRun(
                     "只因出现 AI、数字孪生等词但主题属于医疗健康、消费、金融或营销的材料不得输出。",
                     "重点研究企业材料优先检查产品版本、客户落地、中标、技术成果、融资并购与战略调整；有可靠新事实时不得被同批普通材料挤占。",
                     "遇到政府、监管、标准机构或论文仓库材料，优先提取对工业智能明确产生影响的政策动作、标准变化、研究成果与新技术能力；不得把一般宏观口号写成产业结论。",
+                    "在满足全部事实、范围和证据规则的前提下，应完整提取而不是只挑少数头条；本批尽量达到 limits.targetItems 条有效事件。normal 仅表示重要度，不是省略理由；无法形成具体事件的材料可以不输出，禁止为凑数量编造。",
                     "分类规则：技术论文与核心能力归技术前沿；产品或版本发布归产品发布；客户案例与场景落地归解决方案；定位、合作和组织动作归企业战略；政策、供需与产业生态归产业市场；融资、投资与并购归资本动态。",
                     "本批最多输出 limits.items 条事件和 limits.profiles 份画像；宁少勿滥，不逐篇复述。普通新闻每个原始事件最多一条记录，每条最多 2 条原文引用。",
                     "事件标题不超过 60 字，summary 不超过 180 字，implication 不超过 100 字；画像 narrative 不超过 180 字、positioning 不超过 120 字，solutions 和 capabilities 各保留 1 至 3 条且每条不超过 80 字。",
@@ -1302,14 +1370,23 @@ export async function executeRun(
           const active = current.runs.find((r) => r.id === id)!;
           active.itemCount = state.items.length;
           active.sourceStats = state.sourceStats;
+          const belowPortfolioTarget = current.items.length < 45;
+          const companyDistribution = [...current.items.reduce((counts, item) => {
+            const name = item.company || "行业";
+            counts.set(name, (counts.get(name) ?? 0) + 1);
+            return counts;
+          }, new Map<string, number>()).entries()]
+            .sort(([, left], [, right]) => right - left)
+            .slice(0, 8)
+            .map(([name, count]) => `${name} ${count} 条`).join("、");
           active.events.push({
             at: new Date().toISOString(),
             node: "融合发布",
             message:
               state.mode === "full"
-                ? `旧研究快照已归档，最近 30 天候选 ${qualityCandidates} 条经质量门后发布 ${current.items.length} 条；企业官网画像独立刷新，历史有效画像保留。`
-                : `当天新闻与历史快照融合为 ${qualityCandidates} 条候选，经质量门后发布 ${current.items.length} 条；31 天前新闻已剔除，企业官网画像长期保留。`,
-            status: "ok",
+                ? `旧研究快照已归档，最近 30 天候选 ${qualityCandidates} 条经质量门与企业/主题均衡后发布 ${current.items.length} 条；企业官网画像独立刷新，历史有效画像保留。发布分布：${companyDistribution || "无"}${belowPortfolioTarget ? "；本轮未达到 45 条有效情报参考线，运行记录中的采集、覆盖与拒绝原因可用于继续诊断" : ""}。`
+                : `当天新闻与历史快照融合为 ${qualityCandidates} 条候选，经质量门与企业/主题均衡后发布 ${current.items.length} 条；31 天前新闻已剔除，企业官网画像长期保留。发布分布：${companyDistribution || "无"}${belowPortfolioTarget ? "；当前快照未达到 45 条有效情报参考线" : ""}。`,
+            status: belowPortfolioTarget ? "warning" : "ok",
           });
         });
         return {};
