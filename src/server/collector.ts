@@ -26,7 +26,7 @@ export type Document = {
   source: string;
   profileCompany?: string;
   focusCompany?: string;
-  retrievalMethod?: "html" | "advanced-extract" | "advanced-search" | "official-homepage-fallback";
+  retrievalMethod?: "html" | "advanced-extract" | "advanced-search" | "search-raw-content" | "official-homepage-fallback";
 };
 export class SourceContentError extends Error {
   constructor(public readonly reason: "dynamic" | "empty" | "restricted", message: string) {
@@ -377,8 +377,43 @@ export type DiscoveryCandidate = DiscoveryQuery & {
   url: string;
   title?: string;
   snippet?: string;
+  rawContent?: string;
+  publishedAt?: string | null;
   score?: number;
 };
+
+/**
+ * Turn Tavily's cleaned source body into a traceable research document. Search
+ * results have already passed URL validation and source-tier filtering, but we
+ * still re-check both the publisher and focus-company identity at this trust
+ * boundary. Search summaries are intentionally not accepted here.
+ */
+export function documentFromDiscoveryCandidate(
+  candidate: DiscoveryCandidate,
+  companyWebsiteOverrides?: Settings["companyWebsites"],
+): Document | null {
+  const body = candidate.rawContent?.replace(/\s+/g, " ").trim() ?? "";
+  if (body.length < 160 || !isTrustedSource(candidate.url, companyWebsiteOverrides))
+    return null;
+  try { assertNotRestricted(body); }
+  catch { return null; }
+  if (candidate.focusCompany) {
+    const website = officialWebsite(candidate.focusCompany, companyWebsiteOverrides);
+    const officialPage = Boolean(website && belongsToWebsite(candidate.url, website));
+    const namesCompany = identityText(`${candidate.title ?? ""} ${body}`)
+      .includes(identityText(candidate.focusCompany));
+    if (!officialPage && !namesCompany) return null;
+  }
+  return {
+    url: candidate.url,
+    title: candidate.title?.trim().slice(0, 300) || candidate.coverageKey,
+    text: body.slice(0, 10000),
+    publishedAt: candidate.publishedAt ?? null,
+    source: `${candidate.lane} · ${candidate.coverageKey}`,
+    focusCompany: candidate.focusCompany,
+    retrievalMethod: "search-raw-content",
+  };
+}
 export type DiscoveryResult = {
   candidates: DiscoveryCandidate[];
   queryCount: number;
@@ -634,6 +669,10 @@ export async function discover(
             topic: entry.topic,
             start_date: startDate,
             include_published_date: true,
+            // Tavily has already resolved and parsed these public pages. Keeping
+            // the cleaned source body prevents an otherwise-valid result from
+            // being lost when the publisher blocks our second HTTP fetch.
+            include_raw_content: "text",
             safe_search: true,
             include_domains: entry.domains ?? (entry.sourceScope === "primary"
               ? primarySearchDomains(settings.companyWebsites)
@@ -650,6 +689,8 @@ export async function discover(
             url?: unknown;
             title?: unknown;
             content?: unknown;
+            raw_content?: unknown;
+            published_date?: unknown;
             score?: unknown;
           }[];
         };
@@ -668,6 +709,13 @@ export async function discover(
               continue;
             const title = typeof item.title === "string" ? item.title.trim() : undefined;
             const snippet = typeof item.content === "string" ? item.content.trim() : undefined;
+            const rawContent = typeof item.raw_content === "string"
+              ? item.raw_content.replace(/\s+/g, " ").trim().slice(0, 10000)
+              : undefined;
+            const publishedAt = typeof item.published_date === "string" &&
+              Number.isFinite(Date.parse(item.published_date))
+              ? new Date(item.published_date).toISOString()
+              : null;
             const score = typeof item.score === "number" ? item.score : undefined;
             if (score !== undefined && score < 0.2) continue;
             if (entry.focusCompany) {
@@ -677,7 +725,7 @@ export async function discover(
               if (!resultText.includes(companyKey) && !(website && belongsToWebsite(url, website)))
                 continue;
             }
-            candidates.push({ ...entry, url, title, snippet, score });
+            candidates.push({ ...entry, url, title, snippet, rawContent, publishedAt, score });
           } catch {
             /* Validate all search results before any server-side fetch. */
           }

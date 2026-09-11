@@ -1,11 +1,32 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { canonicalUrl, parsePage, parseSourcePage, SourceContentError } from "../src/server/collector";
+import { canonicalUrl, documentFromDiscoveryCandidate, parsePage, parseSourcePage, SourceContentError } from "../src/server/collector";
 import { evidenceUrl } from "../src/lib/identity";
 
 const url = "https://www.xuelangyun.com/#/about/xly";
 const shell = '<html><head><title>关于雪浪云</title></head><body><noscript>Enable JavaScript to continue.</noscript><div id="app"></div><script src="/app.js"></script></body></html>';
 const text = "雪浪数制是一家用于验证动态正文提取的企业，本段公开资料不会写入真实数据库。".repeat(10);
+
+test("trusted Tavily source bodies survive a publisher-blocked second fetch", () => {
+  const document = documentFromDiscoveryCandidate({
+    lane: "重点企业追踪",
+    coverageKey: "企业官网动态:雪浪数制",
+    query: "雪浪数制 产品发布",
+    topic: "news",
+    focusCompany: "雪浪数制",
+    url: "https://www.xuelangyun.com/news/product",
+    title: "雪浪数制发布工业智能产品",
+    rawContent: "雪浪数制发布面向制造现场的工业智能产品与解决方案。".repeat(10),
+    publishedAt: "2026-09-10T00:00:00Z",
+  });
+  assert.equal(document?.retrievalMethod, "search-raw-content");
+  assert.equal(document?.publishedAt, "2026-09-10T00:00:00Z");
+  assert.equal(documentFromDiscoveryCandidate({
+    lane: "重点企业追踪", coverageKey: "企业:雪浪数制", query: "雪浪数制",
+    topic: "news", focusCompany: "雪浪数制", url: "https://smallmedia.test/a",
+    rawContent: text,
+  }), null);
+});
 
 test("hash routes retain page and evidence identity while ordinary anchors are removed", () => {
   for (const normalize of [canonicalUrl, evidenceUrl]) {

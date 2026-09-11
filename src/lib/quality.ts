@@ -78,7 +78,8 @@ export function assessIntelligence(
   // A primary-source policy, standard or technical result can be useful without
   // being labelled "high" by the model. Ordinary third-party news still needs
   // either strategic focus or a higher importance assessment.
-  if (item.importance === "normal" && !focus && !hasPrimary)
+  if (item.importance === "normal" && !focus && !hasPrimary &&
+      !(hasAuthoritative && item.confidence >= 0.82))
     reasons.push("未达到情报展示价值门槛");
 
   const unsupportedNumbers = materialNumbers(claim).filter((number) =>
@@ -153,5 +154,25 @@ export function balancePublishedIntelligence(
     if (item) add(item);
   }
   for (const item of ranked) add(item);
+
+  // Strict balancing should shape a healthy portfolio, not silently discard
+  // scarce verified intelligence. When the first pass is below the 45-item
+  // operating target, permit only a small second-pass overflow per company.
+  // A larger upstream result set will normally fill under the strict caps.
+  if (selected.length < Math.min(45, ranked.length)) {
+    const relaxedCompanyCap = (key: string) => key === "行业" ? 22 : 3;
+    for (const item of ranked) {
+      if (selected.length >= max) break;
+      const key = companyKey(item);
+      if (selectedIds.has(item.id) ||
+          (companyCounts.get(key) ?? 0) >= relaxedCompanyCap(key) ||
+          (categoryCounts.get(item.category) ?? 0) >= 16)
+        continue;
+      selected.push(item);
+      selectedIds.add(item.id);
+      companyCounts.set(key, (companyCounts.get(key) ?? 0) + 1);
+      categoryCounts.set(item.category, (categoryCounts.get(item.category) ?? 0) + 1);
+    }
+  }
   return selected.sort((a, b) => b.observedAt.localeCompare(a.observedAt));
 }

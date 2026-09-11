@@ -260,6 +260,12 @@ test("major signals require confidence and evidence, then rank by quality", () =
   const weak = { ...baseItem(), id: "weak", eventKey: "weak", confidence: 0.7, evidence };
   assert.deepEqual(prioritySignals([weak, critical]).map((item) => item.id), [critical.id]);
   assert.equal(prioritySignals([{ ...baseItem(), confidence: .95, evidence: [...evidence, { ...evidence[0], url: "https://example.com/?utm_source=copy", quote: "another quote" }] }]).length, 0);
+  const officialHigh = Array.from({ length: 4 }, (_, index) => ({
+    ...baseItem(), id: `official-${index}`, eventKey: `official-${index}`,
+    importance: "high" as const, confidence: .9,
+    evidence: [{ url: `https://www.siemens.com/news/${index}`, title: "官网", quote: "企业官网披露的工业智能产品发布事实" }],
+  }));
+  assert.equal(prioritySignals(officialHigh).length, 3);
 });
 test("evidence keeps independent corroboration but removes repeated excerpts", () => {
   const quote = "蜂巢互联宣布完成十二亿元融资并将资金投入物理AI仿真引擎研发";
@@ -418,7 +424,8 @@ test("Tavily discovery uses cost-aware mixed depth, trusted-domain filtering and
     assert.ok(requests.some((request) => request.search_depth === "advanced" && request.include_domains_mode === "filter"));
     assert.ok(requests.every((request) => request.chunks_per_source === 3 &&
       Array.isArray(request.include_domains) && request.include_domains.includes("example.com") &&
-      request.include_published_date === true && request.safe_search === true &&
+      request.include_published_date === true && request.include_raw_content === "text" &&
+      request.safe_search === true &&
       request.start_date === "2025-09-09"));
   } finally {
     globalThis.fetch = originalFetch;
@@ -466,6 +473,32 @@ test("grounding discards fabricated quotes and binds dates to verified documents
   assert.equal(result.items.length, 1);
   assert.equal(result.items[0].evidence[0].url, "https://example.com/real");
   assert.equal(result.items[0].publishedAt, "2026-09-01T00:00:00Z");
+});
+test("numeric claims are checked against the complete cited document", () => {
+  const quote = "西门子正式发布面向制造现场的工业智能平台。";
+  const output = extractionSchema.parse({
+    items: [{
+      ...baseItem(),
+      title: "西门子发布工业智能平台并落地25项能力",
+      summary: "西门子正式发布工业智能平台，首批包含25项面向制造现场的能力。",
+      company: "西门子",
+      eventKey: "siemens-platform-25",
+      importance: "high",
+      confidence: 0.9,
+      evidence: [{ document: 0, quote }],
+    }],
+    profiles: [],
+  });
+  const grounded = groundExtraction(output, [{
+    url: "https://www.siemens.com/news/platform",
+    title: "西门子工业智能平台",
+    text: `${quote} 官方披露首批产品包含25项面向工业设备与生产线的可验证能力。`,
+    publishedAt: "2026-09-10T00:00:00Z",
+    source: "企业官网",
+  }], "numeric-source-test");
+  assert.equal(grounded.items.length, 1);
+  assert.ok(grounded.items[0].evidence.some((entry) => entry.quote.includes("25项")));
+  assert.equal(assessIntelligence(grounded.items[0], defaultSettings).publishable, true);
 });
 test("normalizes DeepSeek-style aliases without weakening evidence requirements", () => {
   const output = normalizeExtraction({

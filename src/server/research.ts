@@ -12,7 +12,6 @@ import {
   mergeItems,
   mergeProfiles,
   normalizeItemDate,
-  rebuildItems,
   recentIntelligence,
   INTELLIGENCE_WINDOW_DAYS,
   InsightReport,
@@ -30,6 +29,7 @@ import {
   DiscoveryQuery,
   DiscoveryResult,
   Document,
+  documentFromDiscoveryCandidate,
   readSourcePage,
 } from "./collector";
 import { complete, ModelOutputTruncatedError } from "./model";
@@ -247,7 +247,10 @@ export function normalizeExtraction(value: unknown): NormalizedExtraction {
 
 const EXTRACTION_BATCH_SIZE = 10;
 const ANALYSIS_TEXT_LIMIT = 4_800;
-const INITIAL_SOURCE_LIMIT = 88;
+// Company profile pages are a separate, long-lived research product. They must
+// not consume the rolling-news capacity used to build the intelligence feed.
+const INITIAL_EVENT_SOURCE_LIMIT = 78;
+const TOTAL_EVENT_SOURCE_LIMIT = 100;
 
 function analysisExcerpt(source: string) {
   if (source.length <= ANALYSIS_TEXT_LIMIT) return source;
@@ -310,6 +313,25 @@ const State = Annotation.Root({
 const hash = (s: string) =>
   createHash("sha256").update(s).digest("hex").slice(0, 24);
 const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
+const materialNumberTokens = (value: string) =>
+  [...value.matchAll(/\d+(?:\.\d+)?\s*(?:亿|万|%|％|家|项|套|台|份|轮|倍)/g)]
+    .map((match) => match[0].replace(/\s+/g, ""));
+
+function evidenceExcerptForToken(body: string, token: string) {
+  let compact = "";
+  const positions: number[] = [];
+  for (let index = 0; index < body.length; index++) {
+    if (/\s/.test(body[index])) continue;
+    compact += body[index];
+    positions.push(index);
+  }
+  const found = compact.indexOf(token.replace(/\s+/g, ""));
+  if (found < 0) return "";
+  const sourceStart = positions[found] ?? 0;
+  const sourceEnd = positions[Math.min(positions.length - 1, found + token.length)] ?? sourceStart;
+  return body.slice(Math.max(0, sourceStart - 110), Math.min(body.length, sourceEnd + 150))
+    .replace(/\s+/g, " ").trim().slice(0, 350);
+}
 const day = (date: Date) => date.toISOString().slice(0, 10);
 const emptyStats = (): SourceStats => ({
   queryCount: 0,
@@ -353,21 +375,21 @@ function withinWindow(document: Document, startDate: string) {
     Date.parse(document.publishedAt) >= Date.parse(`${startDate}T00:00:00Z`)
   );
 }
-function selectFair(documents: Document[], max = 100) {
+function selectFair(documents: Document[], maxEvents = TOTAL_EVENT_SOURCE_LIMIT) {
   const byUrl = new Map<string, Document>();
   for (const document of documents) {
     if (!byUrl.get(document.url)?.profileCompany) byUrl.set(document.url, document);
   }
   const unique = [...byUrl.values()];
   const groups = new Map<string, Document[]>();
-  for (const document of unique)
+  for (const document of unique.filter((entry) => !entry.profileCompany))
     groups.set(document.source, [...(groups.get(document.source) ?? []), document]);
   const selected: Document[] = [];
-  while (selected.length < max && [...groups.values()].some((group) => group.length))
+  while (selected.length < maxEvents && [...groups.values()].some((group) => group.length))
     for (const group of groups.values())
-      if (group.length && selected.length < max) selected.push(group.shift()!);
+      if (group.length && selected.length < maxEvents) selected.push(group.shift()!);
   const official = unique.filter((document) => document.profileCompany);
-  return { unique, selected: [...official, ...selected.filter((document) => !document.profileCompany)].slice(0, max) };
+  return { unique, selected: [...official, ...selected] };
 }
 
 export function fairDiscoveryCandidates(candidates: DiscoveryResult["candidates"]) {
@@ -467,6 +489,7 @@ async function readDiscovered(
   const documents: Document[] = [];
   let read = 0;
   let failed = 0;
+  let searchBodies = 0;
   const candidates = fairDiscoveryCandidates(discovery.candidates.filter(
     (candidate) => !existing.has(candidate.url),
   ));
@@ -477,6 +500,8 @@ async function readDiscovered(
     const settled = await Promise.allSettled(
       group.map(async (candidate) => {
         const source = `${candidate.lane} · ${candidate.coverageKey}`;
+        const searchDocument = documentFromDiscoveryCandidate(candidate, companyWebsites);
+        if (searchDocument) return searchDocument;
         try {
           const document = (await readSourcePage(candidate.url, source, signal)).document;
           if (!isTrustedSource(document.url, companyWebsites))
@@ -514,10 +539,11 @@ async function readDiscovered(
         continue;
       }
       read++;
+      if (result.value.retrievalMethod === "search-raw-content") searchBodies++;
       if (withinWindow(result.value, startDate)) documents.push(result.value);
     }
   }
-  return { documents: documents.slice(0, maxEffective), read, failed };
+  return { documents: documents.slice(0, maxEffective), read, failed, searchBodies };
 }
 
 export function groundExtraction(
@@ -534,8 +560,29 @@ export function groundExtraction(
     }));
   const observedAt = new Date().toISOString();
   const items: Item[] = output.items.flatMap((i) => {
-    const sources = evidence(i.evidence.filter((c) => !documents[c.document]?.profileCompany));
+    const citations = i.evidence.filter((c) => !documents[c.document]?.profileCompany);
+    let sources = evidence(citations);
     if (!sources.length) return [];
+    // The model quotes the most relevant sentence, which may omit a number that
+    // appears elsewhere on the same cited page. Attach that exact surrounding
+    // source passage so the final numeric gate checks the full cited document,
+    // while still rejecting numbers that do not occur anywhere in the source.
+    const quotedText = () => norm(sources.map((entry) => entry.quote).join(" "));
+    for (const token of materialNumberTokens(`${i.title} ${i.summary}`)) {
+      if (quotedText().includes(norm(token))) continue;
+      for (const citation of citations) {
+        const document = documents[citation.document];
+        if (!document) continue;
+        const quote = evidenceExcerptForToken(document.text, token);
+        if (quote.length < 12) continue;
+        sources = dedupeEvidence([...sources, {
+          url: document.url,
+          title: document.title,
+          quote,
+        }]);
+        break;
+      }
+    }
     const dates = documents
       .filter(
         (d) =>
@@ -821,7 +868,8 @@ export async function executeRun(
               discovery,
               signal,
               state.startDate,
-              Math.max(0, INITIAL_SOURCE_LIMIT - docs.length),
+              Math.max(0, INITIAL_EVENT_SOURCE_LIMIT -
+                docs.filter((document) => !document.profileCompany).length),
               new Set(docs.map((document) => document.url)),
               state.settings.companyWebsites,
             );
@@ -835,7 +883,7 @@ export async function executeRun(
             await log(
               id,
               "开放网络检索",
-              `混合深度搜索执行 ${discovery.queryCount} 个问题（Basic ${discovery.basicQueryCount}、Advanced ${discovery.advancedQueryCount}，预计 ${discovery.estimatedCredits} credits），返回 ${discovery.resultCount} 条结果，可信域名过滤与 URL 去重后 ${discovery.deduplicatedCount} 条；成功读取正文 ${fetched.read} 份，时间窗口内有效内容 ${fetched.documents.length} 份，正文读取失败 ${fetched.failed} 份${discovery.failedQueries ? `，另有 ${discovery.failedQueries} 个搜索问题失败` : ""}。`,
+              `混合深度搜索执行 ${discovery.queryCount} 个问题（Basic ${discovery.basicQueryCount}、Advanced ${discovery.advancedQueryCount}，预计 ${discovery.estimatedCredits} credits），返回 ${discovery.resultCount} 条结果，可信域名过滤与 URL 去重后 ${discovery.deduplicatedCount} 条；成功取得正文 ${fetched.read} 份（其中搜索服务清洗正文 ${fetched.searchBodies} 份），时间窗口内有效内容 ${fetched.documents.length} 份，正文读取失败 ${fetched.failed} 份${discovery.failedQueries ? `，另有 ${discovery.failedQueries} 个搜索问题失败` : ""}。`,
               discovery.failedQueries || fetched.failed ? "warning" : "ok",
             );
           } catch (e) {
@@ -847,14 +895,15 @@ export async function executeRun(
             "开放网络检索",
             "未配置搜索服务：仍会直接采集指定网站，但常规行业扫描、关键词扩展与企业外部追踪不会执行。",
           );
-        const { unique, selected } = selectFair(docs, INITIAL_SOURCE_LIMIT);
+        const { unique, selected } = selectFair(docs, INITIAL_EVENT_SOURCE_LIMIT);
         stats.effective = unique.length;
         stats.analyzed = selected.length;
-        if (unique.length > INITIAL_SOURCE_LIMIT)
+        const uniqueEvents = unique.filter((document) => !document.profileCompany).length;
+        if (uniqueEvents > INITIAL_EVENT_SOURCE_LIMIT)
           await log(
             id,
             "研究预算",
-            `有效内容 ${unique.length} 份，按覆盖维度轮转选择 ${INITIAL_SOURCE_LIMIT} 份进入首轮分析，并预留 ${100 - INITIAL_SOURCE_LIMIT} 份容量用于重点企业与覆盖缺口补搜。`,
+            `有效事件正文 ${uniqueEvents} 份，按覆盖维度轮转选择 ${INITIAL_EVENT_SOURCE_LIMIT} 份进入首轮分析，并预留 ${TOTAL_EVENT_SOURCE_LIMIT - INITIAL_EVENT_SOURCE_LIMIT} 份事件容量用于重点企业与覆盖缺口补搜；企业官网画像不占事件容量。`,
             "warning",
           );
         if (!selected.length)
@@ -872,7 +921,7 @@ export async function executeRun(
         await log(
           id,
           "采集汇总",
-          `搜索范围自 ${state.startDate} 起；共执行 ${stats.queryCount} 个搜索问题，搜索结果 ${stats.searchResults} 条，搜索 URL 去重后 ${stats.deduplicated} 条，成功读取正文 ${stats.read} 份，正文去重与时间筛选后有效内容 ${stats.effective} 份，最终 ${selected.length} 份进入覆盖检查。材料分布：${laneDistribution}；企业官网画像材料 ${selected.filter((document) => document.profileCompany).length} 份。`,
+          `搜索范围自 ${state.startDate} 起；共执行 ${stats.queryCount} 个搜索问题，搜索结果 ${stats.searchResults} 条，搜索 URL 去重后 ${stats.deduplicated} 条，成功读取正文 ${stats.read} 份，正文去重与时间筛选后有效内容 ${stats.effective} 份；最终事件材料 ${selected.filter((document) => !document.profileCompany).length} 份、企业官网画像材料 ${selected.filter((document) => document.profileCompany).length} 份进入覆盖检查。材料分布：${laneDistribution}。`,
         );
         return { documents: selected, sourceStats: stats };
       })
@@ -1016,7 +1065,9 @@ export async function executeRun(
         }
       })
       .addNode("supplement", async (state) => {
-        if (!state.supplementalQueries.length || state.documents.length >= 100)
+        const currentEventCount = state.documents.filter((document) =>
+          !document.profileCompany).length;
+        if (!state.supplementalQueries.length || currentEventCount >= TOTAL_EVENT_SOURCE_LIMIT)
           return {};
         try {
           const discovery = await dependencies.discover(
@@ -1031,13 +1082,13 @@ export async function executeRun(
             discovery,
             signal,
             state.startDate,
-            100 - state.documents.length,
+            TOTAL_EVENT_SOURCE_LIMIT - currentEventCount,
             new Set(state.documents.map((document) => document.url)),
             state.settings.companyWebsites,
           );
           const { selected } = selectFair(
             [...state.documents, ...fetched.documents],
-            100,
+            TOTAL_EVENT_SOURCE_LIMIT,
           );
           const sourceStats: SourceStats = {
             queryCount: state.sourceStats.queryCount + discovery.queryCount,
@@ -1053,7 +1104,7 @@ export async function executeRun(
           await log(
             id,
             "补充搜索",
-            `Advanced 定向补搜执行 ${discovery.queryCount} 个问题（预计 ${discovery.estimatedCredits} credits），新增搜索结果 ${discovery.resultCount} 条，可信域名过滤与 URL 去重后 ${discovery.deduplicatedCount} 条；成功读取正文 ${fetched.read} 份，新增有效内容 ${fetched.documents.length} 份，合计 ${selected.length} 份进入分析。`,
+            `Advanced 定向补搜执行 ${discovery.queryCount} 个问题（预计 ${discovery.estimatedCredits} credits），新增搜索结果 ${discovery.resultCount} 条，可信域名过滤与 URL 去重后 ${discovery.deduplicatedCount} 条；成功取得正文 ${fetched.read} 份（其中搜索服务清洗正文 ${fetched.searchBodies} 份），新增有效内容 ${fetched.documents.length} 份；合计事件材料 ${selected.filter((document) => !document.profileCompany).length} 份、企业官网画像材料 ${selected.filter((document) => document.profileCompany).length} 份进入分析。`,
             discovery.failedQueries || fetched.failed ? "warning" : "ok",
           );
           const stillMissing = state.settings.companies.filter(
@@ -1291,9 +1342,13 @@ export async function executeRun(
       })
       .addNode("synthesize", async (state) => {
         const snapshot = await readDatabase();
-        const merged = state.mode === "full"
-          ? rebuildItems(snapshot.items, state.items)
-          : mergeItems(snapshot.items, state.items).filter((item) => recentIntelligence(item));
+        // A full run refreshes the entire 30-day window, but search variability
+        // must not erase a previously verified event before it expires. Merge
+        // the new findings with still-valid history and re-run the current gate.
+        const merged = mergeItems(
+          snapshot.items.filter((item) => recentIntelligence(item)),
+          state.items,
+        ).filter((item) => recentIntelligence(item));
         // Re-evaluate the complete candidate snapshot so low-quality historical
         // records do not survive until day 30 after the gate becomes stricter.
         const items = balancePublishedIntelligence(
@@ -1340,7 +1395,10 @@ export async function executeRun(
               });
               current.archives = current.archives.slice(-12);
             }
-            const candidates = rebuildItems(current.items, state.items, now);
+            const candidates = mergeItems(
+              current.items.filter((item) => recentIntelligence(item, now)),
+              state.items,
+            ).filter((item) => recentIntelligence(item, now));
             qualityCandidates = candidates.length;
             current.items = balancePublishedIntelligence(
               filterPublishableIntelligence(candidates, current.settings).accepted,
@@ -1368,7 +1426,9 @@ export async function executeRun(
           }
           current.insights = currentInsights(state.insights ?? current.insights, current.items);
           const active = current.runs.find((r) => r.id === id)!;
-          active.itemCount = state.items.length;
+          // Keep the run card, dashboard total and publication log on the same
+          // atomic snapshot; extraction-stage counts remain in the audit trail.
+          active.itemCount = current.items.length;
           active.sourceStats = state.sourceStats;
           const belowPortfolioTarget = current.items.length < 45;
           const companyDistribution = [...current.items.reduce((counts, item) => {

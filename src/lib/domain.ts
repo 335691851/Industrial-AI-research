@@ -267,16 +267,19 @@ export function priorityScore(item: Item, now = new Date()) {
 export function isMajorSignal(item: Item) {
   const evidence = dedupeEvidence(item.evidence);
   const sourceCount = new Set(evidence.map((e) => evidenceUrl(e.url))).size;
+  const hasAccountableSource = evidence.some((entry) => evidenceAuthority(entry) >= 2);
   return (
     (item.importance === "critical" && item.confidence >= 0.72 && evidence.length >= 1) ||
-    (item.importance === "high" && item.confidence >= 0.82 && sourceCount >= 2)
+    (item.importance === "high" && item.confidence >= 0.82 &&
+      (sourceCount >= 2 || hasAccountableSource))
   );
 }
 
 export function prioritySignals(items: Item[], now = new Date()) {
   return items
     .filter(isMajorSignal)
-    .sort((a, b) => priorityScore(b, now) - priorityScore(a, now));
+    .sort((a, b) => priorityScore(b, now) - priorityScore(a, now))
+    .slice(0, 3);
 }
 
 function evidenceAuthority(entry: Evidence) {
