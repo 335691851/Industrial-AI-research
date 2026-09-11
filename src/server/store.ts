@@ -13,7 +13,7 @@ import {
 } from "@/lib/domain";
 import { identityText } from "@/lib/identity";
 import { currentInsights } from "./synthesis";
-import { emptyDatabase } from "@/lib/seed";
+import { emptyDatabase, requiredFocusCompanies } from "@/lib/seed";
 
 const dataFolder = () => path.join(process.cwd(), ".data");
 export function isCloud() {
@@ -58,9 +58,13 @@ function removeLegacyDemoContent(db: Database): Database {
   const sources = db.settings.sources.filter(
     (source) => (source as { kind: string }).kind !== "wechat",
   );
+  const companies = [...db.settings.companies];
+  for (const company of requiredFocusCompanies)
+    if (!companies.some((name) => identityText(name) === identityText(company)))
+      companies.push(company);
   return {
     ...db,
-    settings: { ...db.settings, models, sources },
+    settings: { ...db.settings, models, sources, companies },
     items,
     profiles,
   };

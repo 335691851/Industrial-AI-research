@@ -3050,6 +3050,43 @@ h1 { color: #132038; font-size: 31px; letter-spacing: -.4px; font-weight: 720; }
 .synthesis-empty > svg { flex-shrink: 0; margin-top: 3px; }
 .synthesis-empty h3 { font-size: 14px; color: #69809e; margin: 0 0 8px; }
 .synthesis-empty p { font-size: 12px; line-height: 1.9; margin: 0; max-width: 800px; }
+.daily-filter {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 8px 10px;
+  border: 1px solid #f1cdb8;
+  border-radius: 7px;
+  background: #fff9f5;
+  color: #b66338;
+  font-size: 10px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: border-color .2s ease, background .2s ease, box-shadow .2s ease, transform .2s ease;
+}
+.daily-filter:hover:not(:disabled) { border-color: #ed9c70; background: #fff3eb; transform: translateY(-1px); }
+.daily-filter.selected { color: #fff; border-color: #e9783e; background: linear-gradient(120deg, #ef7c43, #e96535); box-shadow: 0 7px 18px rgb(231 105 51 / 20%); }
+.daily-filter:disabled { opacity: .45; cursor: default; }
+.daily-filter > span { min-width: 18px; padding: 1px 5px; border-radius: 9px; color: #c96838; background: #ffe8db; font-variant-numeric: tabular-nums; }
+.daily-filter.selected > span { color: #d75d28; background: #fff; }
+.feed-card.latest-daily { position: relative; background: linear-gradient(90deg, #fff8f3 0, #fff 48%); box-shadow: inset 3px 0 #ef8a54; }
+.feed-card.latest-daily:hover { background: linear-gradient(90deg, #fff3eb 0, #f8faff 55%); }
+.daily-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 7px;
+  border: 1px solid #e4eaf1;
+  border-radius: 10px;
+  color: #76869a;
+  background: #f7f9fc;
+  font-weight: 650;
+  letter-spacing: .2px;
+  white-space: nowrap;
+}
+.daily-badge.latest { color: #d7642d; border-color: #f5c9b0; background: #fff0e7; box-shadow: 0 3px 10px rgb(223 111 54 / 10%); }
 @media (max-width: 720px) {
   .synthesis-heading, .synthesis-overview { padding: 12px 16px; }
   .synthesis-heading span { display: none; }
@@ -3065,6 +3102,10 @@ h1 { color: #132038; font-size: 31px; letter-spacing: -.4px; font-weight: 720; }
   .conclusion-judgment { font-size: 14px; }
   .conclusion-implications { grid-template-columns: 1fr; gap: 14px; padding: 14px; }
   .conclusion-implications > div + div { border-left: 0; border-top: 1px solid #e6ecf5; padding-left: 0; padding-top: 14px; }
+  .feed-controls { flex-wrap: wrap; }
+  .daily-filter { order: 3; width: 100%; }
+  .feed-meta { flex-wrap: wrap; }
+  .feed-date { margin-left: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }

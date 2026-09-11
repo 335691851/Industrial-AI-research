@@ -1,5 +1,10 @@
 import { z } from "zod";
-import { evidenceUrl, identityText, textSimilarity } from "./identity";
+import {
+  evidenceUrl,
+  identityText,
+  knownOfficialUrl,
+  textSimilarity,
+} from "./identity";
 
 export const topics = [
   "工业互联网",
@@ -119,6 +124,8 @@ export type Item = {
   confidence: number;
   evidence: Evidence[];
   runId: string;
+  /** Run that first introduced this event into a published snapshot. */
+  firstSeenRunId?: string;
   eventKey: string;
 };
 export type Profile = {
@@ -248,7 +255,7 @@ export const recentNews = recentIntelligence;
 
 export function priorityScore(item: Item, now = new Date()) {
   const importance = { critical: 42, high: 24, normal: 0 }[item.importance];
-  const evidence = Math.min(new Set(item.evidence.map((e) => evidenceUrl(e.url))).size, 4) * 6;
+  const evidence = Math.min(new Set(dedupeEvidence(item.evidence).map((e) => evidenceUrl(e.url))).size, 4) * 6;
   const confidence = Math.round(item.confidence * 20);
   const date = Date.parse(effectiveDate(item));
   const ageDays = Number.isFinite(date)
@@ -258,9 +265,10 @@ export function priorityScore(item: Item, now = new Date()) {
 }
 
 export function isMajorSignal(item: Item) {
-  const sourceCount = new Set(item.evidence.map((e) => evidenceUrl(e.url))).size;
+  const evidence = dedupeEvidence(item.evidence);
+  const sourceCount = new Set(evidence.map((e) => evidenceUrl(e.url))).size;
   return (
-    (item.importance === "critical" && item.confidence >= 0.72 && item.evidence.length >= 1) ||
+    (item.importance === "critical" && item.confidence >= 0.72 && evidence.length >= 1) ||
     (item.importance === "high" && item.confidence >= 0.82 && sourceCount >= 2)
   );
 }
@@ -270,26 +278,68 @@ export function prioritySignals(items: Item[], now = new Date()) {
     .filter(isMajorSignal)
     .sort((a, b) => priorityScore(b, now) - priorityScore(a, now));
 }
+
+function evidenceAuthority(entry: Evidence) {
+  try {
+    const host = new URL(entry.url).hostname.replace(/^www\./, "").toLowerCase();
+    if (knownOfficialUrl(entry.url)) return 3;
+    if (/\.(gov|edu)(\.cn)?$/.test(host) || host === "arxiv.org") return 3;
+    if (/(reuters|bloomberg|sec\.gov|miit\.gov\.cn|gov\.cn|xinhuanet|people\.com\.cn)/.test(host))
+      return 2;
+  } catch {
+    return 0;
+  }
+  return 1;
+}
+
+/**
+ * Keep independent corroboration while collapsing repeated snippets, tracking
+ * parameters, and syndicated copies of the same quotation.
+ */
+export function dedupeEvidence(entries: Evidence[]) {
+  const sorted = [...entries].sort((a, b) =>
+    evidenceAuthority(b) - evidenceAuthority(a) || b.quote.length - a.quote.length,
+  );
+  const unique: Evidence[] = [];
+  for (const entry of sorted) {
+    const quote = identityText(entry.quote);
+    const duplicate = unique.some((kept) => {
+      const keptQuote = identityText(kept.quote);
+      const samePage = evidenceUrl(kept.url) === evidenceUrl(entry.url);
+      if (samePage)
+        return quote === keptQuote || quote.includes(keptQuote) || keptQuote.includes(quote) ||
+          textSimilarity(entry.quote, kept.quote) >= 0.82;
+      return quote.length >= 24 && keptQuote.length >= 24 &&
+        textSimilarity(entry.quote, kept.quote) >= 0.95;
+    });
+    if (!duplicate) unique.push(entry);
+  }
+  return unique;
+}
+
 export function mergeItems(existing: Item[], incoming: Item[]) {
   const map = new Map<string, Item>();
   for (const item of [...existing, ...incoming]) {
     const prior = map.get(item.eventKey) ?? [...map.values()].find((other) => sameEvent(other, item));
     if (prior) {
-      const evidence = [...prior.evidence, ...item.evidence].filter(
-        (e, i, all) =>
-          all.findIndex((a) => evidenceUrl(a.url) === evidenceUrl(e.url) && a.quote === e.quote) === i,
-      );
+      const evidence = dedupeEvidence([...prior.evidence, ...item.evidence]);
       // Do not re-date an event just because it was rediscovered.
       map.set(prior.eventKey, normalizeItemDate({
-        ...(item.confidence > prior.confidence ? item : prior),
+        // A freshly grounded event may correct an older overstatement. Prefer
+        // the new wording while retaining the original observation date.
+        ...item,
         id: prior.id,
         eventKey: prior.eventKey,
+        firstSeenRunId: prior.firstSeenRunId ?? prior.runId,
         observedAt: prior.observedAt < item.observedAt ? prior.observedAt : item.observedAt,
         effectiveAt: effectiveDate(prior),
         publishedAt: prior.publishedAt ?? item.publishedAt,
         evidence,
       }));
-    } else map.set(item.eventKey, normalizeItemDate(item));
+    } else map.set(item.eventKey, normalizeItemDate({
+      ...item,
+      firstSeenRunId: item.firstSeenRunId ?? item.runId,
+    }));
   }
   return [...map.values()].sort((a, b) =>
     b.observedAt.localeCompare(a.observedAt),
@@ -313,11 +363,7 @@ export function mergeProfiles(existing: Profile[], incoming: Profile[]) {
               ...new Set([...old.capabilities, ...p.capabilities]),
             ],
             funding: p.funding === "未披露" ? old.funding : p.funding,
-            evidence: [...old.evidence, ...p.evidence].filter(
-              (e, i, a) =>
-                a.findIndex((v) => v.url === e.url && v.quote === e.quote) ===
-                i,
-            ),
+            evidence: dedupeEvidence([...old.evidence, ...p.evidence]),
           }
         : p,
     );

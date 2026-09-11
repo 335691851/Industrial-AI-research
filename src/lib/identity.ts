@@ -8,6 +8,9 @@ const aliases: [RegExp, string][] = [
   [/nancal|能科科技/gi, "能科科技"],
   [/irootech|rootcloud|树根科技|树根互联/gi, "树根互联"],
   [/supcon|中控技术/gi, "中控技术"],
+  [/xuelang(?:yun)?|雪浪云|雪浪数制/gi, "雪浪数制"],
+  [/honeycomb\s*(?:tech)?|蜂巢互联/gi, "蜂巢互联"],
+  [/anthropic/gi, "anthropic"],
   [/memorandum\s*of\s*understanding|mou|非约束性(?:协议|谅解备忘录)|合作备忘录|谅解备忘录/gi, "备忘录"],
   [/industrial\s*(?:ai|artificial intelligence)|工业人工智能|工业ai/gi, "工业智能"],
 ];
@@ -47,7 +50,25 @@ export const companyWebsites: Record<string, string> = {
   树根互联: "https://www.irootech.com/",
   能科科技: "https://www.nancal.com/",
   索辰科技: "https://www.demxs.com/",
+  雪浪数制: "https://www.xuelangyun.com/",
+  蜂巢互联: "https://www.honeycombtech.com/",
+  anthropic: "https://www.anthropic.com/",
 };
+
+const companySearchAliases: Record<string, string[]> = {
+  雪浪数制: ["雪浪数制", "雪浪云", "Xuelang"],
+  蜂巢互联: ["蜂巢互联", "Honeycomb Tech"],
+  英伟达: ["NVIDIA", "英伟达"],
+  达索系统: ["达索系统", "Dassault Systèmes"],
+  西门子: ["西门子", "Siemens"],
+  树根互联: ["树根互联", "树根科技", "RootCloud", "iRootech"],
+  中控技术: ["中控技术", "SUPCON"],
+};
+
+export function companySearchTerms(name: string) {
+  return companySearchAliases[identityText(name)] ?? [name];
+}
+
 export function officialWebsite(name: string, overrides?: Record<string, string>) {
   return overrides?.[name] || companyWebsites[identityText(name)];
 }
@@ -57,4 +78,8 @@ export function belongsToWebsite(url: string, website: string) {
     const root = new URL(website).hostname.replace(/^www\./, "");
     return host === root || host.endsWith(`.${root}`);
   } catch { return false; }
+}
+
+export function knownOfficialUrl(url: string) {
+  return Object.values(companyWebsites).some((website) => belongsToWebsite(url, website));
 }

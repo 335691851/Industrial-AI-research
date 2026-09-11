@@ -37,6 +37,7 @@ import {
   topics,
   categories,
   prioritySignals,
+  dedupeEvidence,
   effectiveDate,
   validDate,
 } from "@/lib/domain";
@@ -71,6 +72,7 @@ export function Workspace() {
   const [mobile, setMobile] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sort, setSort] = useState("importance");
+  const [latestDailyOnly, setLatestDailyOnly] = useState(false);
   const [accessToken, setAccessToken] = useState("");
   const [unlockOpen, setUnlockOpen] = useState(false);
   const [tokenInput, setTokenInput] = useState("");
@@ -189,9 +191,20 @@ export function Workspace() {
     }
   }
   const items = data?.items ?? [];
+  const publishedDailyRuns = [...(data?.runs ?? [])]
+    .filter((run) => /^daily-\d{4}-\d{2}-\d{2}$/.test(run.id) &&
+      ["completed", "partial"].includes(run.status) &&
+      run.events.some((event) => event.node === "融合发布"))
+    .sort((a, b) => (b.finishedAt ?? b.startedAt).localeCompare(a.finishedAt ?? a.startedAt));
+  const latestDailyRun = publishedDailyRuns[0];
+  const dailyRuns = new Map(publishedDailyRuns.map((run) => [run.id, run]));
+  const latestDailyItems = latestDailyRun
+    ? items.filter((item) => item.runId === latestDailyRun.id)
+    : [];
   const filtered = items
     .filter(
       (i) =>
+        (!latestDailyOnly || i.runId === latestDailyRun?.id) &&
         (topic === "全部领域" || i.topic === topic) &&
         (category === "全部情报" || i.category === category) &&
         `${i.title} ${i.summary} ${i.company}`
@@ -501,7 +514,9 @@ export function Workspace() {
                         </h2>
                         <span className="subtle">
                           <span className="status-dot" />
-                          融合更新
+                          {latestDailyRun
+                            ? `${latestDailyRun.date.slice(5).replace("-", "/")} 19:00 增量 · ${latestDailyItems.length} 条`
+                            : "融合更新"}
                         </span>
                       </div>
                       <div className="feed-controls">
@@ -531,6 +546,17 @@ export function Workspace() {
                           <option value="importance">重要度优先</option>
                           <option value="date">最新发布</option>
                         </select>
+                        <button
+                          type="button"
+                          className={`daily-filter${latestDailyOnly ? " selected" : ""}`}
+                          aria-pressed={latestDailyOnly}
+                          disabled={!latestDailyRun || latestDailyItems.length === 0}
+                          onClick={() => setLatestDailyOnly((current) => !current)}
+                        >
+                          <Clock3 size={14} />
+                          最新 19:00 增量
+                          <span>{latestDailyItems.length}</span>
+                        </button>
                       </div>
                       <div className="category-tabs">
                         {["全部情报", ...visibleCategories].map((c) => (
@@ -545,9 +571,14 @@ export function Workspace() {
                         ))}
                       </div>
                       <div className="feed-list">
-                        {filtered.map((item) => (
+                        {filtered.map((item) => {
+                          const dailyRun = dailyRuns.get(item.runId);
+                          const latestDaily = dailyRun?.id === latestDailyRun?.id;
+                          const firstPublishedInRun =
+                            (item.firstSeenRunId ?? item.runId) === item.runId;
+                          return (
                           <button
-                            className="feed-card"
+                            className={`feed-card${latestDaily ? " latest-daily" : ""}`}
                             key={item.id}
                             onClick={() => setDetail(item)}
                           >
@@ -564,6 +595,14 @@ export function Workspace() {
                                   {item.category}
                                 </span>
                                 <span>{item.company}</span>
+                                {dailyRun && (
+                                  <span className={`daily-badge${latestDaily ? " latest" : ""}`}>
+                                    <Clock3 size={11} />
+                                    {latestDaily
+                                      ? `19:00 ${firstPublishedInRun ? "新增" : "更新"}`
+                                      : `${dailyRun.date.slice(5).replace("-", "/")} 增量`}
+                                  </span>
+                                )}
                                 <span className="feed-date">
                                   {new Date(effectiveDate(item)).toLocaleDateString("zh-CN", { month: "2-digit", day: "2-digit", timeZone: "Asia/Shanghai" })}
                                   {!validDate(item.publishedAt) && " · 收录日"}
@@ -582,13 +621,14 @@ export function Workspace() {
                                 <span className="tag">{item.topic}</span>
                                 <span>
                                   <ShieldCheck size={12} />
-                                  {`${item.evidence.length} 条原文证据`}
+                                  {`${dedupeEvidence(item.evidence).length} 条原文证据`}
                                 </span>
                                 <ArrowUpRight size={15} />
                               </div>
                             </div>
                           </button>
-                        ))}
+                          );
+                        })}
                         {!filtered.length && (
                           <div className="empty-state">
                             <Search />
@@ -609,6 +649,7 @@ export function Workspace() {
                                   setQuery("");
                                   setTopic("全部领域");
                                   setCategory("全部情报");
+                                  setLatestDailyOnly(false);
                                 }}
                               >
                                 重置筛选

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useRef } from "react";
 import { X, ArrowUpRight, ExternalLink, Building2 } from "lucide-react";
-import { Item, Profile, effectiveDate, validDate } from "@/lib/domain";
+import { Item, Profile, dedupeEvidence, effectiveDate, validDate } from "@/lib/domain";
 
 export function Detail({
   value,
@@ -16,6 +16,7 @@ export function Detail({
   }, []);
   const item = "category" in value ? value : undefined;
   const profile = "narrative" in value ? value : undefined;
+  const evidence = dedupeEvidence(value.evidence);
   return (
     <dialog
       className="detail-dialog"
@@ -90,10 +91,10 @@ export function Detail({
           <p>{value.implication}</p>
         </div>
         <h3>
-          来源与原文证据 <span className="muted">{value.evidence.length}</span>
+          来源与原文证据 <span className="muted">{evidence.length}</span>
         </h3>
-        {value.evidence.length ? (
-          value.evidence.map((e, i) => (
+        {evidence.length ? (
+          evidence.map((e, i) => (
             <div className="evidence" key={e.url + i}>
               <a href={e.url} target="_blank" rel="noopener noreferrer">
                 {e.title || new URL(e.url).hostname}

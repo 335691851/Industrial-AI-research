@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { recentIntelligence, mergeItems, mergeProfiles, prioritySignals, settingsSchema, topics } from "../src/lib/domain";
+import { Item, dedupeEvidence, recentIntelligence, mergeItems, mergeProfiles, prioritySignals, settingsSchema, topics } from "../src/lib/domain";
 import {
   publicAddress,
   validateUrl,
@@ -14,6 +14,7 @@ import { normalizeItemDate, effectiveDate, rebuildItems } from "../src/lib/domai
 import { currentInsights, validateInsights } from "../src/server/synthesis";
 import { dashboardProfiles, publishedSnapshot } from "../src/server/store";
 import { emptyDatabase } from "../src/lib/seed";
+import { assessIntelligence } from "../src/lib/quality";
 import {
   extractionSchema,
   groundExtraction,
@@ -180,6 +181,7 @@ test("fusion is idempotent, unions sources and never re-dates rediscovered event
   const update = {
     ...item,
     title: "updated",
+    runId: "daily-2026-09-11",
     publishedAt: new Date(Date.now() + 86400000).toISOString(),
     evidence: [
       {
@@ -193,6 +195,9 @@ test("fusion is idempotent, unions sources and never re-dates rediscovered event
   assert.equal(merged.length, 1);
   assert.equal(merged[0].evidence.length, 2);
   assert.equal(merged[0].publishedAt, item.publishedAt);
+  assert.equal(merged[0].runId, "daily-2026-09-11");
+  assert.equal(merged[0].firstSeenRunId, "run-1");
+  assert.equal(mergeItems([], [update])[0].firstSeenRunId, "daily-2026-09-11");
 });
 test("profile update preserves known funding and historical capabilities", () => {
   const profile = {
@@ -255,6 +260,81 @@ test("major signals require confidence and evidence, then rank by quality", () =
   assert.deepEqual(prioritySignals([weak, critical]).map((item) => item.id), [critical.id]);
   assert.equal(prioritySignals([{ ...baseItem(), confidence: .95, evidence: [...evidence, { ...evidence[0], url: "https://example.com/?utm_source=copy", quote: "another quote" }] }]).length, 0);
 });
+test("evidence keeps independent corroboration but removes repeated excerpts", () => {
+  const quote = "蜂巢互联宣布完成十二亿元融资并将资金投入物理AI仿真引擎研发";
+  const evidence = dedupeEvidence([
+    { url: "https://www.honeycombtech.com/news/a?utm_source=x", title: "官网", quote },
+    { url: "https://www.honeycombtech.com/news/a", title: "官网副本", quote: `${quote}与产业化` },
+    { url: "https://copy.example.com/a", title: "转载", quote: `${quote}与产业化` },
+    { url: "https://second.example.com/a", title: "独立报道", quote: "该轮融资由产业资本参与，企业同时披露了新的研发与交付规划" },
+  ]);
+  assert.equal(evidence.length, 2);
+  assert.ok(evidence.some((entry) => entry.url.includes("honeycombtech.com")));
+});
+test("publication quality gate rejects off-scope, vague and overstated claims", () => {
+  const assess = (overrides: Partial<Item>) => assessIntelligence({
+    ...baseItem(),
+    evidence: [{ url: "https://unknown.example.com/news", title: "原文", quote: "企业披露相关信息，但没有更多独立核验材料" }],
+    ...overrides,
+  }, defaultSettings);
+  assert.equal(assess({
+    title: "华大基因发布生命数字孪生体系与i99智健平台",
+    summary: "面向基因与生命健康管理发布数字孪生平台。",
+    company: "华大基因",
+  }).publishable, false);
+  assert.equal(assess({
+    title: "中工互联发布智工6.0，推动工业AI从AI顾问到AI工人",
+    summary: "企业自述发布工业AI产品，但暂无官网或独立权威来源完成核验。",
+    company: "中工互联",
+  }).publishable, false);
+  assert.equal(assess({
+    title: "传统工厂加速AI落地，工业垂类模型向生产决策纵深拓展",
+    summary: "行业正在加速制造业AI转型升级。",
+    company: "行业",
+  }).publishable, false);
+  assert.equal(assess({
+    title: "Aramco Digital与Avathon达成战略合作，加速工业AI落地",
+    summary: "双方宣布建立合作伙伴关系并推动行业发展。",
+    company: "沙特阿美",
+  }).publishable, false);
+  assert.equal(assess({
+    title: "Anthropic推出可自主操作制造设备的MHS工具",
+    summary: "Anthropic正式发布工具并已具备自主控制制造设备能力。",
+    company: "Anthropic",
+    evidence: [{
+      url: "https://www.anthropic.com/news/model-hardware-standard-research-preview",
+      title: "Model Hardware Standard research preview",
+      quote: "We are sharing the Model Hardware Standard as a research preview and proposed specification for programmable devices.",
+    }],
+  }).publishable, false);
+});
+test("publication quality gate accepts concrete official focus-company events", () => {
+  const snow = assessIntelligence({
+    ...baseItem(),
+    title: "雪浪数制发布工业数据平台新版本",
+    summary: "雪浪数制发布面向制造现场的工业数据平台新版本。",
+    company: "雪浪数制",
+    evidence: [{
+      url: "https://www.xuelangyun.com/news/product",
+      title: "产品新闻",
+      quote: "雪浪数制发布面向制造现场的工业数据平台新版本",
+    }],
+  }, defaultSettings);
+  const honeycomb = assessIntelligence({
+    ...baseItem(),
+    title: "蜂巢互联完成12亿元融资并发布物理AI仿真引擎",
+    summary: "蜂巢互联完成12亿元融资，资金用于物理AI仿真引擎研发。",
+    company: "蜂巢互联",
+    category: "资本动态",
+    evidence: [{
+      url: "https://www.honeycombtech.com/news/company",
+      title: "公司新闻",
+      quote: "蜂巢互联完成12亿元融资，资金将用于物理AI仿真引擎研发",
+    }],
+  }, defaultSettings);
+  assert.equal(snow.publishable, true, snow.reasons.join("、"));
+  assert.equal(honeycomb.publishable, true, honeycomb.reasons.join("、"));
+});
 test("settings reject unlisted model identifiers", () => {
   assert.equal(settingsSchema.safeParse(defaultSettings).success, true);
   assert.equal(settingsSchema.safeParse({ ...defaultSettings, models: { ...defaultSettings.models, deepseek: "deepseek-chat" } }).success, false);
@@ -279,6 +359,13 @@ test("discovery plan covers every configured target and site", () => {
     assert.ok(plan.some((entry) => entry.query.includes(`"${keyword}"`)));
   for (const company of defaultSettings.companies)
     assert.ok(plan.some((entry) => entry.query.includes(`"${company}"`)));
+  for (const company of ["雪浪数制", "蜂巢互联"])
+    assert.ok(plan.some((entry) => entry.focusCompany === company &&
+      entry.coverageKey === `企业官网动态:${company}` && entry.priority === 4));
+  const incremental = buildDiscoveryPlan(defaultSettings, "incremental");
+  for (const company of ["雪浪数制", "蜂巢互联"])
+    assert.ok(incremental.some((entry) => entry.focusCompany === company &&
+      /融资|投资|并购/.test(entry.query)));
 });
 test("Tavily discovery uses Advanced search, date scope and URL deduplication", async () => {
   const originalFetch = globalThis.fetch;

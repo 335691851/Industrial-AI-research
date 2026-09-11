@@ -4,7 +4,13 @@ import ipaddr from "ipaddr.js";
 import { Agent, fetch as secureFetch } from "undici";
 import * as cheerio from "cheerio";
 import { Run, Source, Settings, topics } from "@/lib/domain";
-import { belongsToWebsite, identityText, normalizePageFragment } from "@/lib/identity";
+import {
+  belongsToWebsite,
+  companySearchTerms,
+  identityText,
+  normalizePageFragment,
+  officialWebsite,
+} from "@/lib/identity";
 
 export type Document = {
   url: string;
@@ -13,7 +19,8 @@ export type Document = {
   publishedAt: string | null;
   source: string;
   profileCompany?: string;
-  retrievalMethod?: "html" | "advanced-extract" | "official-homepage-fallback";
+  focusCompany?: string;
+  retrievalMethod?: "html" | "advanced-extract" | "advanced-search" | "official-homepage-fallback";
 };
 export class SourceContentError extends Error {
   constructor(public readonly reason: "dynamic" | "empty" | "restricted", message: string) {
@@ -351,9 +358,16 @@ export type DiscoveryQuery = {
   query: string;
   topic: "news" | "general";
   coverageKey: string;
+  focusCompany?: string;
+  priority?: number;
 };
 
-export type DiscoveryCandidate = DiscoveryQuery & { url: string };
+export type DiscoveryCandidate = DiscoveryQuery & {
+  url: string;
+  title?: string;
+  snippet?: string;
+  score?: number;
+};
 export type DiscoveryResult = {
   candidates: DiscoveryCandidate[];
   queryCount: number;
@@ -367,7 +381,8 @@ const query = (
   coverageKey: string,
   value: string,
   topic: DiscoveryQuery["topic"] = "news",
-): DiscoveryQuery => ({ lane, coverageKey, query: value, topic });
+  options: Pick<DiscoveryQuery, "focusCompany" | "priority"> = {},
+): DiscoveryQuery => ({ lane, coverageKey, query: value, topic, ...options });
 
 export function buildDiscoveryPlan(
   settings: Settings,
@@ -427,26 +442,35 @@ export function buildDiscoveryPlan(
       ),
     );
   }
-  for (let index = 0; index < settings.companies.length; index += 3) {
-    const companies = settings.companies.slice(index, index + 3);
-    const companyExpression = companies
-      .map((company) => `"${company}"`)
+  // Every focus company receives its own result set. Sharing one 8/10-result
+  // query across three companies allowed large brands to crowd out smaller but
+  // strategically important companies.
+  for (const company of settings.companies) {
+    const companyExpression = companySearchTerms(company)
+      .map((term) => `"${term}"`)
       .join(" OR ");
     plan.push(
       query(
         "重点企业追踪",
-        `企业:${companies.join("、")}`,
-        `(${companyExpression}) (战略 OR 定位 OR 产品 OR 技术 OR 合作 OR 客户)`,
+        `企业:${company}`,
+        `(${companyExpression}) (发布 OR 推出 OR 上线 OR 技术突破 OR 客户落地 OR 中标 OR 融资 OR 投资 OR 并购 OR 战略升级)`,
+        "news",
+        { focusCompany: company, priority: 3 },
       ),
     );
-    if (mode === "full")
+    const website = officialWebsite(company, settings.companyWebsites);
+    if (website) {
+      const domain = validateUrl(website).hostname.replace(/^www\./, "");
       plan.push(
         query(
           "重点企业追踪",
-          `企业资本:${companies.join("、")}`,
-          `(${companyExpression}) (融资 OR 投资 OR 并购 OR 收购 OR 财报 OR 市场份额)`,
+          `企业官网动态:${company}`,
+          `site:${domain} (${companyExpression}) (news OR 新闻 OR 发布 OR 产品 OR 技术 OR 客户 OR 融资 OR 投资 OR 并购)`,
+          "general",
+          { focusCompany: company, priority: 4 },
         ),
       );
+    }
   }
   const domains = [
     ...new Set(
@@ -530,14 +554,31 @@ export async function discover(
         if (!response.ok)
           throw new Error(`搜索服务返回 HTTP ${response.status}。`);
         const body = (await response.json()) as {
-          results?: { url?: unknown }[];
+          results?: {
+            url?: unknown;
+            title?: unknown;
+            content?: unknown;
+            score?: unknown;
+          }[];
         };
         const candidates: DiscoveryCandidate[] = [];
         for (const item of body.results ?? []) {
           resultCount++;
           if (typeof item.url !== "string") continue;
           try {
-            candidates.push({ ...entry, url: canonicalUrl(item.url) });
+            const url = canonicalUrl(item.url);
+            const title = typeof item.title === "string" ? item.title.trim() : undefined;
+            const snippet = typeof item.content === "string" ? item.content.trim() : undefined;
+            const score = typeof item.score === "number" ? item.score : undefined;
+            if (score !== undefined && score < 0.2) continue;
+            if (entry.focusCompany) {
+              const companyKey = identityText(entry.focusCompany);
+              const resultText = identityText(`${title ?? ""} ${snippet ?? ""}`);
+              const website = officialWebsite(entry.focusCompany, settings.companyWebsites);
+              if (!resultText.includes(companyKey) && !(website && belongsToWebsite(url, website)))
+                continue;
+            }
+            candidates.push({ ...entry, url, title, snippet, score });
           } catch {
             /* Validate all search results before any server-side fetch. */
           }
@@ -549,9 +590,17 @@ export async function discover(
       if (result.status === "fulfilled") results.push(...result.value);
       else failedQueries++;
   }
-  const candidates = [
-    ...new Map(results.map((result) => [result.url, result])).values(),
-  ];
+  const byUrl = new Map<string, DiscoveryCandidate>();
+  for (const result of results) {
+    const current = byUrl.get(result.url);
+    // The same page is often found by the broad scan first. Preserve the
+    // dedicated-company context so later quota and coverage checks still know
+    // which strategic company this document satisfies.
+    if (!current || (result.priority ?? 0) > (current.priority ?? 0) ||
+        (!current.focusCompany && result.focusCompany))
+      byUrl.set(result.url, result);
+  }
+  const candidates = [...byUrl.values()];
   return {
     candidates,
     queryCount: plan.length,

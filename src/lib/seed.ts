@@ -3,6 +3,8 @@ import {
   providers,
 } from "./domain";
 
+export const requiredFocusCompanies = ["雪浪数制", "蜂巢互联"] as const;
+
 export const defaultSettings: Database["settings"] = {
   revision: 0,
   keywords: [
@@ -26,6 +28,7 @@ export const defaultSettings: Database["settings"] = {
     "树根互联",
     "能科科技",
     "索辰科技",
+    ...requiredFocusCompanies,
   ],
   sources: [
     {

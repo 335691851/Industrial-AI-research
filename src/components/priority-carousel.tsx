@@ -1,7 +1,7 @@
 "use client";
 import { useRef, useState } from "react";
 import { ArrowLeft, ArrowRight, ShieldCheck } from "lucide-react";
-import { Item, priorityScore } from "@/lib/domain";
+import { Item, dedupeEvidence, priorityScore } from "@/lib/domain";
 
 export function PriorityCarousel({
   items,
@@ -54,7 +54,7 @@ export function PriorityCarousel({
             <h3>{item.title}</h3>
             <p>{item.summary}</p>
             <div className="highlight-proof">
-              <ShieldCheck size={13} />可信度 {Math.round(item.confidence * 100)}% · {item.evidence.length} 条原文证据
+              <ShieldCheck size={13} />可信度 {Math.round(item.confidence * 100)}% · {dedupeEvidence(item.evidence).length} 条原文证据
             </div>
           </button>
         ))}
