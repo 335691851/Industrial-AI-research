@@ -386,7 +386,7 @@ test("Tavily discovery uses Advanced search, date scope and URL deduplication", 
   };
   try {
     const result = await discover(
-      { ...defaultSettings, keywords: [], companies: [], sources: [] },
+      { ...defaultSettings, keywords: [], companies: [], sources: [], companyWebsites: { fixture: "https://example.com" } },
       "full",
       [],
       "2025-09-09",
@@ -401,6 +401,7 @@ test("Tavily discovery uses Advanced search, date scope and URL deduplication", 
           request.search_depth === "advanced" &&
           request.chunks_per_source === 3 &&
           request.max_results === 10 &&
+          Array.isArray(request.include_domains) && request.include_domains.includes("example.com") &&
           request.start_date === "2025-09-09",
       ),
     );

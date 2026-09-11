@@ -4,6 +4,7 @@ import ipaddr from "ipaddr.js";
 import { Agent, fetch as secureFetch } from "undici";
 import * as cheerio from "cheerio";
 import { Run, Source, Settings, topics } from "@/lib/domain";
+import { isOfficialSource, officialSearchDomains } from "@/lib/source-policy";
 import {
   belongsToWebsite,
   companySearchTerms,
@@ -548,6 +549,7 @@ export async function discover(
             max_results: mode === "full" ? 10 : 8,
             topic: entry.topic,
             start_date: startDate,
+            include_domains: officialSearchDomains(settings.companyWebsites),
           }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
         });
@@ -567,6 +569,7 @@ export async function discover(
           if (typeof item.url !== "string") continue;
           try {
             const url = canonicalUrl(item.url);
+            if (!isOfficialSource(url, settings.companyWebsites)) continue;
             const title = typeof item.title === "string" ? item.title.trim() : undefined;
             const snippet = typeof item.content === "string" ? item.content.trim() : undefined;
             const score = typeof item.score === "number" ? item.score : undefined;

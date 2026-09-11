@@ -18,6 +18,7 @@ import {
   InsightReport,
 } from "@/lib/domain";
 import { filterPublishableIntelligence } from "@/lib/quality";
+import { isOfficialSource } from "@/lib/source-policy";
 import { currentInsights, synthesisInstruction, validateInsights } from "./synthesis";
 import {
   collectSource,
@@ -446,6 +447,8 @@ async function readDiscovered(
         const source = `${candidate.lane} · ${candidate.coverageKey}`;
         try {
           const document = (await readSourcePage(candidate.url, source, signal)).document;
+          if (!isOfficialSource(document.url, companyWebsites))
+            throw new Error("最终正文地址非官方来源，已剔除。");
           return { ...document, focusCompany: candidate.focusCompany };
         } catch (error) {
           const website = candidate.focusCompany
@@ -736,7 +739,12 @@ export async function executeRun(
             }
           }));
         }
-        const enabled = state.settings.sources.filter((s) => s.enabled);
+        const enabled = state.settings.sources.filter((s) =>
+          s.enabled && isOfficialSource(s.url, state.settings.companyWebsites));
+        const excluded = state.settings.sources.filter((s) => s.enabled &&
+          !isOfficialSource(s.url, state.settings.companyWebsites));
+        if (excluded.length) await log(id, "来源准入",
+          `仅采集官方一手来源，跳过 ${excluded.length} 个非官方或尚未确认的入口：${excluded.map((s) => s.name).join("、")}。`, "warning");
         for (let index = 0; index < enabled.length; index += 4) {
           signal.throwIfAborted();
           const group = enabled.slice(index, index + 4);
@@ -749,6 +757,7 @@ export async function executeRun(
             const result = results[i];
             if (result.status === "fulfilled") {
               const effective = result.value.filter((document) =>
+                isOfficialSource(document.url, state.settings.companyWebsites) &&
                 withinWindow(document, state.startDate),
               );
               stats.read += result.value.length;

@@ -22,6 +22,7 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
     await mutateDatabase((db) => {
       db.items = [];
       db.profiles = [];
+      db.settings.companyWebsites = { 测试公司: "https://example.com" };
       db.settings.sources = [
         {
           id: "test",
@@ -125,6 +126,7 @@ test("research synthesizes the merged corpus and publishes traceable insight ato
     const encrypted = await encrypt("test-not-a-real-api-key");
     await mutateDatabase((db) => {
       db.settings.companies = [];
+      db.settings.companyWebsites = { 测试公司: "https://example.com" };
       db.settings.sources = [{ id: "fixture", name: "fixture", url: "https://example.com/new", kind: "website", enabled: true }];
       db.credentials.deepseek = encrypted;
       db.items = [{ id: "history", eventKey: "history", title: "另一企业披露工业设计软件能力", summary: "另一企业公布了工业设计软件的新功能与交付路径。", implication: "研究分析", category: "产品发布", topic: "工业智能", importance: "high", company: "历史公司", confidence: .9, publishedAt: new Date().toISOString(), observedAt: new Date().toISOString(), runId: "history", evidence: [{ url: "https://example.com/history", title: "原文", quote: "另一企业披露的设计软件功能原文证据" }] }];
@@ -170,6 +172,7 @@ test("truncated extraction is compacted and split automatically without shrinkin
       db.items = [];
       db.profiles = [];
       db.settings.companies = [];
+      db.settings.companyWebsites = { 测试公司: "https://example.com" };
       db.settings.sources = [{ id: "fixture", name: "fixture", url: "https://example.com", kind: "website", enabled: true }];
       db.credentials.deepseek = encrypted;
     });

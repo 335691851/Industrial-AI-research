@@ -1,11 +1,7 @@
 import type { Item, Settings } from "./domain";
 import { dedupeEvidence } from "./domain";
-import {
-  belongsToWebsite,
-  identityText,
-  knownOfficialUrl,
-  officialWebsite,
-} from "./identity";
+import { identityText } from "./identity";
+import { isOfficialSource } from "./source-policy";
 
 export type QualityAssessment = {
   publishable: boolean;
@@ -26,29 +22,9 @@ const materialDeliverable =
 const genericNarrative =
   /加速.*落地|推动.*发展|赋能.*转型|助力.*升级|向.*纵深|未来可期|开启新篇章|共创.*未来/i;
 
-function configuredWebsite(url: string, settings: Pick<Settings, "sources" | "companyWebsites">) {
-  return settings.sources.some((source) => source.enabled && belongsToWebsite(url, source.url)) ||
-    Object.values(settings.companyWebsites ?? {}).some((website) => belongsToWebsite(url, website));
-}
-
-function institutionalSource(url: string) {
-  try {
-    const host = new URL(url).hostname.replace(/^www\./, "").toLowerCase();
-    return /\.(gov|edu)(\.cn)?$/.test(host) || host === "arxiv.org" ||
-      /(reuters|bloomberg|sec\.gov|miit\.gov\.cn|gov\.cn|xinhuanet|people\.com\.cn)/.test(host);
-  } catch {
-    return false;
-  }
-}
-
 function isFocusCompany(company: string, companies: string[]) {
   const key = identityText(company);
   return companies.some((name) => identityText(name) === key);
-}
-
-function officialForCompany(item: Item, settings: Pick<Settings, "companyWebsites">) {
-  const website = officialWebsite(item.company, settings.companyWebsites);
-  return Boolean(website && item.evidence.some((entry) => belongsToWebsite(entry.url, website)));
 }
 
 function materialNumbers(value: string) {
@@ -62,19 +38,12 @@ export function assessIntelligence(
   settings: Pick<Settings, "companies" | "sources" | "companyWebsites">,
 ): QualityAssessment {
   const reasons: string[] = [];
-  const evidence = dedupeEvidence(item.evidence);
+  const evidence = dedupeEvidence(item.evidence.filter((entry) =>
+    isOfficialSource(entry.url, settings.companyWebsites)));
   const evidenceText = evidence.map((entry) => `${entry.title} ${entry.quote}`).join(" ");
   const claim = `${item.title} ${item.summary}`;
   const allText = `${claim} ${evidenceText}`;
   const focus = isFocusCompany(item.company, settings.companies);
-  const official = officialForCompany(item, settings);
-  const trusted = evidence.some((entry) =>
-    knownOfficialUrl(entry.url) || configuredWebsite(entry.url, settings) || institutionalSource(entry.url),
-  );
-  const domains = new Set(evidence.flatMap((entry) => {
-    try { return [new URL(entry.url).hostname.replace(/^www\./, "")]; }
-    catch { return []; }
-  }));
 
   if (!evidence.length) reasons.push("缺少可核验原文");
   if (item.confidence < 0.72) reasons.push("研究置信度不足");
@@ -93,12 +62,7 @@ export function assessIntelligence(
   if (item.importance === "normal" && !focus)
     reasons.push("未达到情报展示价值门槛");
 
-  // One unrecognized page is not enough for a publishable claim. A configured
-  // focus company may use its official site; otherwise require corroboration.
-  if (!trusted && domains.size < 2)
-    reasons.push(focus ? "重点企业信息缺少官网或交叉验证" : "单一非权威来源");
-  if (focus && !official && !trusted && domains.size < 2)
-    reasons.push("重点企业事实未完成权威核验");
+  if (!evidence.length) reasons.push("缺少官方一手来源，多家转载不能替代官方披露");
 
   const unsupportedNumbers = materialNumbers(claim).filter((number) =>
     !evidenceText.replace(/\s+/g, "").includes(number),
@@ -117,7 +81,10 @@ export function filterPublishableIntelligence(
   settings: Pick<Settings, "companies" | "sources" | "companyWebsites">,
 ) {
   const rejected = new Map<string, number>();
-  const accepted = items.filter((item) => {
+  const accepted = items.map((item) => ({ ...item,
+    evidence: dedupeEvidence(item.evidence.filter((entry) =>
+      isOfficialSource(entry.url, settings.companyWebsites))),
+  })).filter((item) => {
     const result = assessIntelligence(item, settings);
     for (const reason of result.reasons)
       rejected.set(reason, (rejected.get(reason) ?? 0) + 1);
