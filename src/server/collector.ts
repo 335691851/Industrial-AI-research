@@ -4,7 +4,12 @@ import ipaddr from "ipaddr.js";
 import { Agent, fetch as secureFetch } from "undici";
 import * as cheerio from "cheerio";
 import { Run, Source, Settings, topics } from "@/lib/domain";
-import { isOfficialSource, officialSearchDomains } from "@/lib/source-policy";
+import {
+  isOfficialSource,
+  isTrustedSource,
+  primarySearchDomains,
+  trustedSearchDomains,
+} from "@/lib/source-policy";
 import {
   belongsToWebsite,
   companySearchTerms,
@@ -361,6 +366,11 @@ export type DiscoveryQuery = {
   coverageKey: string;
   focusCompany?: string;
   priority?: number;
+  searchDepth?: "basic" | "advanced";
+  sourceScope?: "primary" | "trusted";
+  domains?: string[];
+  domainMode?: "filter" | "boost";
+  maxResults?: number;
 };
 
 export type DiscoveryCandidate = DiscoveryQuery & {
@@ -375,6 +385,9 @@ export type DiscoveryResult = {
   resultCount: number;
   deduplicatedCount: number;
   failedQueries: number;
+  basicQueryCount: number;
+  advancedQueryCount: number;
+  estimatedCredits: number;
 };
 
 const query = (
@@ -382,7 +395,7 @@ const query = (
   coverageKey: string,
   value: string,
   topic: DiscoveryQuery["topic"] = "news",
-  options: Pick<DiscoveryQuery, "focusCompany" | "priority"> = {},
+  options: Omit<DiscoveryQuery, "lane" | "coverageKey" | "query" | "topic"> = {},
 ): DiscoveryQuery => ({ lane, coverageKey, query: value, topic, ...options });
 
 export function buildDiscoveryPlan(
@@ -394,33 +407,58 @@ export function buildDiscoveryPlan(
     query(
       "常规行业扫描",
       "行业动态",
-      '("industrial AI" OR "工业人工智能" OR "工业软件" OR "工业互联网") (产品发布 OR 技术突破 OR 融资 OR 并购)',
+      '("industrial AI" OR "工业人工智能" OR "工业软件" OR "工业互联网") (发布 OR 技术突破 OR 客户落地 OR 融资 OR 并购)',
+      "news",
+      { searchDepth: "basic", sourceScope: "trusted", domainMode: "filter", maxResults: 12 },
     ),
     query(
       "常规行业扫描",
-      "前沿技术",
-      '("manufacturing AI" OR "physical AI" OR "3D AI" OR "digital twin") (research OR benchmark OR platform OR release)',
+      "物理AI技术前沿",
+      '("physical AI" OR embodied AI OR world model OR "neural simulator" OR "sim-to-real" OR synthetic data) (manufacturing OR industrial OR robotics) (research OR benchmark OR dataset OR framework OR release)',
       "general",
+      { searchDepth: "advanced", sourceScope: "primary", domainMode: "filter", maxResults: 12 },
+    ),
+    query(
+      "常规行业扫描",
+      "工业智能衍生技术",
+      '(industrial agent OR "manufacturing foundation model" OR "3D generative AI" OR neural operator OR differentiable simulation) (paper OR research OR benchmark OR open source)',
+      "general",
+      { searchDepth: "advanced", sourceScope: "primary", domainMode: "filter", maxResults: 12 },
     ),
     query(
       "常规行业扫描",
       "产品与方案",
       '(工业智能 OR industrial intelligence OR industrial agent) (产品 OR 平台 OR 解决方案 OR customer case)',
+      "news",
+      { searchDepth: "basic", sourceScope: "trusted", domainMode: "filter", maxResults: 12 },
     ),
     query(
       "常规行业扫描",
       "企业战略",
       '(工业软件 OR industrial AI OR manufacturing AI) (战略 OR 定位 OR 合作 OR 生态 OR partnership)',
+      "news",
+      { searchDepth: "basic", sourceScope: "trusted", domainMode: "filter", maxResults: 10 },
     ),
     query(
       "常规行业扫描",
       "产业市场",
-      '(工业智能 OR 工业软件 OR manufacturing AI) (政策 OR 市场 OR 产业 OR 报告 OR adoption)',
+      '(工业智能 OR 人工智能赋能新型工业化 OR 工业软件 OR 智能制造) (国家政策 OR 部委 OR 国务院 OR 工信部 OR 发改委 OR 标准 OR 试点 OR 专项行动)',
+      "news",
+      { searchDepth: "advanced", sourceScope: "primary", domainMode: "filter", maxResults: 14 },
+    ),
+    query(
+      "常规行业扫描",
+      "全球产业政策",
+      '(manufacturing AI OR industrial AI OR advanced manufacturing) (government policy OR national strategy OR regulation OR public funding OR standard)',
+      "news",
+      { searchDepth: "advanced", sourceScope: "primary", domainMode: "filter", maxResults: 12 },
     ),
     query(
       "常规行业扫描",
       "资本市场",
       '(工业软件 OR manufacturing AI OR 3D AI) (融资 OR 投资 OR 并购 OR acquisition OR funding)',
+      "news",
+      { searchDepth: "advanced", sourceScope: "trusted", domainMode: "filter", maxResults: 12 },
     ),
   ];
   for (const direction of topics)
@@ -430,6 +468,7 @@ export function buildDiscoveryPlan(
         `方向:${direction}`,
         `"${direction}" (研究 OR 技术突破 OR 产品 OR 解决方案 OR 应用 OR 融资)`,
         mode === "full" ? "general" : "news",
+        { searchDepth: "basic", sourceScope: "trusted", domainMode: "filter", maxResults: 10 },
       ),
     );
   for (let index = 0; index < settings.keywords.length; index += 4) {
@@ -440,6 +479,7 @@ export function buildDiscoveryPlan(
         `关键词:${keywords.join("、")}`,
         `(${keywords.map((keyword) => `"${keyword}"`).join(" OR ")}) (研究 OR 技术 OR 产品 OR 应用 OR 市场 OR 融资)`,
         mode === "full" ? "general" : "news",
+        { searchDepth: "basic", sourceScope: "trusted", domainMode: "filter", maxResults: 10 },
       ),
     );
   }
@@ -454,9 +494,18 @@ export function buildDiscoveryPlan(
       query(
         "重点企业追踪",
         `企业:${company}`,
-        `(${companyExpression}) (发布 OR 推出 OR 上线 OR 技术突破 OR 客户落地 OR 中标 OR 融资 OR 投资 OR 并购 OR 战略升级)`,
+        `(${companyExpression}) (产品发布 OR 新版本 OR 解决方案 OR 客户落地 OR 中标 OR 技术突破 OR 专利 OR 标准)`,
         "news",
-        { focusCompany: company, priority: 3 },
+        { focusCompany: company, priority: 3, searchDepth: "basic", sourceScope: "trusted", domainMode: "filter", maxResults: 10 },
+      ),
+    );
+    plan.push(
+      query(
+        "重点企业追踪",
+        `企业资本与战略:${company}`,
+        `(${companyExpression}) (融资 OR 投资 OR 并购 OR 收购 OR 上市 OR 营收 OR 战略 OR 组织调整)`,
+        "news",
+        { focusCompany: company, priority: 4, searchDepth: "basic", sourceScope: "trusted", domainMode: "filter", maxResults: 8 },
       ),
     );
     const website = officialWebsite(company, settings.companyWebsites);
@@ -468,7 +517,7 @@ export function buildDiscoveryPlan(
           `企业官网动态:${company}`,
           `site:${domain} (${companyExpression}) (news OR 新闻 OR 发布 OR 产品 OR 技术 OR 客户 OR 融资 OR 投资 OR 并购)`,
           "general",
-          { focusCompany: company, priority: 4 },
+          { focusCompany: company, priority: 5, searchDepth: "advanced", sourceScope: "primary", domains: [domain], domainMode: "filter", maxResults: 10 },
         ),
       );
     }
@@ -486,13 +535,15 @@ export function buildDiscoveryPlan(
         }),
     ),
   ];
-  for (const domain of domains)
+  for (const domain of domains.filter((domain) =>
+    isTrustedSource(`https://${domain}`, settings.companyWebsites)))
     plan.push(
       query(
         "指定网站发现",
         `网站:${domain}`,
         `site:${domain} (news OR research OR product OR solution OR 新闻 OR 研究 OR 产品)`,
         "general",
+        { searchDepth: "basic", sourceScope: "trusted", domains: [domain], domainMode: "filter", maxResults: 10 },
       ),
     );
   const combined = [...plan, ...supplemental].filter(
@@ -520,17 +571,22 @@ export async function discover(
       resultCount: 0,
       deduplicatedCount: 0,
       failedQueries: 0,
+      basicQueryCount: 0,
+      advancedQueryCount: 0,
+      estimatedCredits: 0,
     };
   const plan = supplementalOnly
     ? [
         ...new Map(
           supplemental.map((entry) => [entry.query.toLowerCase(), entry]),
         ).values(),
-      ].slice(0, 12)
+      ].slice(0, 12).map((entry) => ({ ...entry, searchDepth: "advanced" as const }))
     : buildDiscoveryPlan(settings, mode, supplemental);
   const results: DiscoveryCandidate[] = [];
   let resultCount = 0;
   let failedQueries = 0;
+  const advancedQueryCount = plan.filter((entry) => entry.searchDepth === "advanced").length;
+  const basicQueryCount = plan.length - advancedQueryCount;
   for (let index = 0; index < plan.length; index += 4) {
     signal.throwIfAborted();
     const group = plan.slice(index, index + 4);
@@ -544,12 +600,18 @@ export async function discover(
           },
           body: JSON.stringify({
             query: entry.query,
-            search_depth: "advanced",
+            search_depth: entry.searchDepth ?? "basic",
             chunks_per_source: 3,
-            max_results: mode === "full" ? 10 : 8,
+            max_results: entry.maxResults ?? (mode === "full" ? 10 : 8),
             topic: entry.topic,
             start_date: startDate,
-            include_domains: officialSearchDomains(settings.companyWebsites),
+            include_published_date: true,
+            safe_search: true,
+            include_domains: entry.domains ?? (entry.sourceScope === "primary"
+              ? primarySearchDomains(settings.companyWebsites)
+              : trustedSearchDomains(settings.companyWebsites)),
+            include_domains_mode: entry.domainMode ??
+              "filter",
           }),
           signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
         });
@@ -569,7 +631,13 @@ export async function discover(
           if (typeof item.url !== "string") continue;
           try {
             const url = canonicalUrl(item.url);
-            if (!isOfficialSource(url, settings.companyWebsites)) continue;
+            const trusted = entry.sourceScope === "primary"
+              ? isOfficialSource(url, settings.companyWebsites)
+              : isTrustedSource(url, settings.companyWebsites);
+            if (!trusted) continue;
+            if (entry.domainMode === "filter" && entry.domains?.length &&
+                !entry.domains.some((domain) => belongsToWebsite(url, `https://${domain}`)))
+              continue;
             const title = typeof item.title === "string" ? item.title.trim() : undefined;
             const snippet = typeof item.content === "string" ? item.content.trim() : undefined;
             const score = typeof item.score === "number" ? item.score : undefined;
@@ -610,5 +678,8 @@ export async function discover(
     resultCount,
     deduplicatedCount: candidates.length,
     failedQueries,
+    basicQueryCount,
+    advancedQueryCount,
+    estimatedCredits: basicQueryCount + advancedQueryCount * 2,
   };
 }

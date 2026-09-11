@@ -55,6 +55,9 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
         resultCount: 0,
         deduplicatedCount: 0,
         failedQueries: 0,
+        basicQueryCount: 0,
+        advancedQueryCount: 0,
+        estimatedCredits: 0,
       }),
       complete: async () => {
         throw new Error("测试模型暂不可用。");
@@ -134,7 +137,7 @@ test("research synthesizes the merged corpus and publishes traceable insight ato
     const run = await startRun("incremental");
     await executeRun(run.id, false, {
       collectSource: async () => [{ url: "https://example.com/new", title: "设备维护", text: quote.repeat(10), publishedAt: new Date().toISOString(), source: "fixture" }],
-      discover: async () => ({ candidates: [], queryCount: 0, resultCount: 0, deduplicatedCount: 0, failedQueries: 0 }),
+      discover: async () => ({ candidates: [], queryCount: 0, resultCount: 0, deduplicatedCount: 0, failedQueries: 0, basicQueryCount: 0, advancedQueryCount: 0, estimatedCredits: 0 }),
       complete: async (_provider, _model, _key, system, prompt) => {
         if (system === synthesisInstruction) {
           const events = JSON.parse(prompt).events as { id: string }[];
@@ -185,7 +188,7 @@ test("truncated extraction is compacted and split automatically without shrinkin
         publishedAt: new Date().toISOString(),
         source: "fixture",
       })),
-      discover: async () => ({ candidates: [], queryCount: 0, resultCount: 0, deduplicatedCount: 0, failedQueries: 0 }),
+      discover: async () => ({ candidates: [], queryCount: 0, resultCount: 0, deduplicatedCount: 0, failedQueries: 0, basicQueryCount: 0, advancedQueryCount: 0, estimatedCredits: 0 }),
       complete: async (_provider, _model, _key, system, prompt) => {
         if (system === synthesisInstruction) {
           const eventIds = (JSON.parse(prompt).events as { id: string }[]).map((event) => event.id);

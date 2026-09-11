@@ -3,7 +3,7 @@ import {
   providers,
 } from "./domain";
 
-export const requiredFocusCompanies = ["雪浪数制", "蜂巢互联"] as const;
+export const requiredFocusCompanies = ["雪浪数制", "蜂巢互联", "创新奇智"] as const;
 
 export const defaultSettings: Database["settings"] = {
   revision: 0,

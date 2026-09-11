@@ -359,15 +359,18 @@ test("discovery plan covers every configured target and site", () => {
     assert.ok(plan.some((entry) => entry.query.includes(`"${keyword}"`)));
   for (const company of defaultSettings.companies)
     assert.ok(plan.some((entry) => entry.query.includes(`"${company}"`)));
-  for (const company of ["雪浪数制", "蜂巢互联"])
+  for (const company of ["雪浪数制", "蜂巢互联", "创新奇智"])
     assert.ok(plan.some((entry) => entry.focusCompany === company &&
-      entry.coverageKey === `企业官网动态:${company}` && entry.priority === 4));
+      entry.coverageKey === `企业官网动态:${company}` && entry.priority === 5 &&
+      entry.searchDepth === "advanced" && entry.domainMode === "filter"));
   const incremental = buildDiscoveryPlan(defaultSettings, "incremental");
-  for (const company of ["雪浪数制", "蜂巢互联"])
+  for (const company of ["雪浪数制", "蜂巢互联", "创新奇智"])
     assert.ok(incremental.some((entry) => entry.focusCompany === company &&
       /融资|投资|并购/.test(entry.query)));
+  assert.ok(plan.some((entry) => entry.coverageKey === "物理AI技术前沿" && entry.searchDepth === "advanced"));
+  assert.ok(plan.some((entry) => entry.coverageKey === "产业市场" && entry.sourceScope === "primary"));
 });
-test("Tavily discovery uses Advanced search, date scope and URL deduplication", async () => {
+test("Tavily discovery uses cost-aware mixed depth, trusted-domain filtering and URL deduplication", async () => {
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.TAVILY_API_KEY;
   const requests: Record<string, unknown>[] = [];
@@ -392,19 +395,17 @@ test("Tavily discovery uses Advanced search, date scope and URL deduplication", 
       "2025-09-09",
       AbortSignal.timeout(5000),
     );
-    assert.equal(result.queryCount, 12);
-    assert.equal(result.resultCount, 24);
+    assert.equal(result.queryCount, 14);
+    assert.equal(result.resultCount, 28);
     assert.equal(result.deduplicatedCount, 1);
-    assert.ok(
-      requests.every(
-        (request) =>
-          request.search_depth === "advanced" &&
-          request.chunks_per_source === 3 &&
-          request.max_results === 10 &&
-          Array.isArray(request.include_domains) && request.include_domains.includes("example.com") &&
-          request.start_date === "2025-09-09",
-      ),
-    );
+    assert.equal(result.estimatedCredits, result.basicQueryCount + result.advancedQueryCount * 2);
+    assert.ok(result.basicQueryCount > result.advancedQueryCount);
+    assert.ok(requests.some((request) => request.search_depth === "basic" && request.include_domains_mode === "filter"));
+    assert.ok(requests.some((request) => request.search_depth === "advanced" && request.include_domains_mode === "filter"));
+    assert.ok(requests.every((request) => request.chunks_per_source === 3 &&
+      Array.isArray(request.include_domains) && request.include_domains.includes("example.com") &&
+      request.include_published_date === true && request.safe_search === true &&
+      request.start_date === "2025-09-09"));
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.TAVILY_API_KEY;

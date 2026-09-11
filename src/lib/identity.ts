@@ -10,6 +10,8 @@ const aliases: [RegExp, string][] = [
   [/supcon|中控技术/gi, "中控技术"],
   [/xuelang(?:yun)?|雪浪云|雪浪数制/gi, "雪浪数制"],
   [/honeycomb\s*(?:tech)?|蜂巢互联/gi, "蜂巢互联"],
+  [/gstar(?:cad)?|浩辰软件/gi, "浩辰软件"],
+  [/ainnovation|创新奇智/gi, "创新奇智"],
   [/anthropic/gi, "anthropic"],
   [/memorandum\s*of\s*understanding|mou|非约束性(?:协议|谅解备忘录)|合作备忘录|谅解备忘录/gi, "备忘录"],
   [/industrial\s*(?:ai|artificial intelligence)|工业人工智能|工业ai/gi, "工业智能"],
@@ -52,12 +54,16 @@ export const companyWebsites: Record<string, string> = {
   索辰科技: "https://www.demxs.com/",
   雪浪数制: "https://www.xuelangyun.com/",
   蜂巢互联: "https://www.honeycombtech.com/",
+  浩辰软件: "https://www.gstarcad.com/",
+  创新奇智: "https://www.ainnovation.com/",
   anthropic: "https://www.anthropic.com/",
 };
 
 const companySearchAliases: Record<string, string[]> = {
   雪浪数制: ["雪浪数制", "雪浪云", "Xuelang"],
   蜂巢互联: ["蜂巢互联", "Honeycomb Tech"],
+  浩辰软件: ["浩辰软件", "GstarCAD", "Gstarsoft"],
+  创新奇智: ["创新奇智", "AInnovation"],
   英伟达: ["NVIDIA", "英伟达"],
   达索系统: ["达索系统", "Dassault Systèmes"],
   西门子: ["西门子", "Siemens"],
