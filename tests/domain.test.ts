@@ -390,6 +390,37 @@ test("discovery reading order reserves 40% for industry and caps focus-company m
   assert.equal(first.filter((entry) => entry.lane === "重点企业追踪").length, 15);
   assert.equal(first.filter((entry) => entry.lane === "配置关键词扩展").length, 5);
 });
+test("daily search reduces credits while preserving every configured company and topic", async () => {
+  const extras = Array.from({ length: 12 }, (_, index) => ({
+    lane: "自主规划补充" as const, coverageKey: `extra-${index}`, query: `extra query ${index}`,
+    topic: "general" as const, searchDepth: "advanced" as const,
+  }));
+  const daily = buildDiscoveryPlan(defaultSettings, "incremental", extras);
+  const full = buildDiscoveryPlan(defaultSettings, "full", extras.slice(0, 6));
+  const cost = (plan: typeof daily) => plan.reduce((sum, entry) => sum + (entry.searchDepth === "advanced" ? 2 : 1), 0);
+  assert.ok(cost(daily) + 6 <= 42);
+  assert.ok(cost(daily) < cost(full) * .6);
+  for (const company of defaultSettings.companies)
+    assert.equal(daily.filter((entry) => entry.focusCompany === company).length, 1);
+  for (const term of [...topics, ...defaultSettings.keywords])
+    assert.ok(daily.some((entry) => entry.query.includes(`"${term}"`)), term);
+  for (const key of ["物理AI技术前沿", "产业市场", "全球产业政策", "科技平台制造合作"])
+    assert.ok(daily.some((entry) => entry.coverageKey === key));
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.TAVILY_API_KEY;
+  process.env.TAVILY_API_KEY = "test-only";
+  let requests = 0;
+  globalThis.fetch = async () => { requests++; return Response.json({ results: [] }); };
+  try {
+    const result = await discover(defaultSettings, "incremental", extras, "2026-09-12", AbortSignal.timeout(5000), true);
+    assert.equal(requests, 3);
+    assert.equal(result.estimatedCredits, 6);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.TAVILY_API_KEY;
+    else process.env.TAVILY_API_KEY = originalKey;
+  }
+});
 test("Tavily discovery uses cost-aware mixed depth, trusted-domain filtering and URL deduplication", async () => {
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.TAVILY_API_KEY;

@@ -764,11 +764,12 @@ export async function executeRun(
                   },
                 ],
               },
-              limits: { extraQueries: 6 },
+              limits: { extraQueries: run.mode === "incremental" ? 2 : 6 },
             }),
             signal,
           );
           planned = agentQueries(value, "自主规划补充");
+          if (run.mode === "incremental") planned.queries = planned.queries.slice(0, 2);
         } catch (error) {
           await log(
             id,
@@ -794,9 +795,22 @@ export async function executeRun(
       .addNode("collect", async (state) => {
         const docs: Document[] = [];
         const stats = emptyStats();
-        // Reserve two source slots per company before the open-web budget is spent.
-        for (let index = 0; index < state.settings.companies.length; index += 4) {
-          const names = state.settings.companies.slice(index, index + 4);
+        const profileTargets = state.settings.companies.filter((name) => {
+          if (state.mode === "full") return true;
+          const website = officialWebsite(name, state.settings.companyWebsites);
+          const profile = db.profiles.find((entry) => identityText(entry.name) === identityText(name));
+          const age = Date.now() - Date.parse(profile?.updatedAt ?? "");
+          return !profile || profile.basis !== "official" || !profile.narrative ||
+            !profile.positioning || !profile.solutions.length || !profile.capabilities.length ||
+            !website || !profile.evidence.some((entry) => belongsToWebsite(entry.url, website)) ||
+            !Number.isFinite(age) || age < 0 || age >= 7 * 86400000;
+        });
+        if (state.mode === "incremental") {
+          const dailyPlan = buildDiscoveryPlan(state.settings, state.mode, state.planQueries);
+          await log(id, "增量预算", `首轮 ${dailyPlan.length} 个 Basic 查询，预算 ${dailyPlan.length} search credits；Advanced 补搜最多 3 问 / 6 credits。官网画像复用 ${state.settings.companies.length - profileTargets.length} 家、刷新 ${profileTargets.length} 家（7 天周期）；Extract 单独计费，恢复节点可能重发请求。`);
+        }
+        for (let index = 0; index < profileTargets.length; index += 4) {
+          const names = profileTargets.slice(index, index + 4);
           await Promise.all(names.map(async (name) => {
             const website = officialWebsite(name, state.settings.companyWebsites);
             if (!website) {
@@ -926,10 +940,17 @@ export async function executeRun(
         return { documents: selected, sourceStats: stats };
       })
       .addNode("coverage", async (state) => {
+        const supplementLimit = state.mode === "incremental" ? 3 : 12;
         const deterministicPlan = buildDiscoveryPlan(state.settings, state.mode);
         const missingCompanies = state.settings.companies.filter(
           (company) => companyDocumentCount(state.documents, company) === 0,
         );
+        // Rotate daily recovery opportunities so a quiet company at the start
+        // of the list does not permanently consume the small supplement budget.
+        if (state.mode === "incremental" && missingCompanies.length) {
+          const offset = Math.floor(Date.parse(`${state.startDate}T00:00:00Z`) / 86400000) % missingCompanies.length;
+          missingCompanies.push(...missingCompanies.splice(0, offset));
+        }
         const missingKeys = new Set(missingCompanies.map(identityText));
         const queriesByCompany = new Map<string, DiscoveryQuery[]>();
         for (const entry of deterministicPlan
@@ -960,17 +981,17 @@ export async function executeRun(
         ];
         const thematicGaps = thematicTargets.filter((coverageKey) =>
           state.documents.filter((document) =>
-            document.source.includes(`· ${coverageKey}`)).length < 3);
+            document.source.includes(`· ${coverageKey}`)).length < (state.mode === "incremental" ? 1 : 3));
         const thematicQueries = thematicGaps.flatMap((coverageKey) => {
           const entry = deterministicPlan.find((candidate) =>
             candidate.coverageKey === coverageKey);
           return entry ? [{ ...entry, lane: "自主规划补充" as const }] : [];
         });
         const mandatoryQueries: DiscoveryQuery[] = [];
-        while (mandatoryQueries.length < 12 &&
+        while (mandatoryQueries.length < supplementLimit &&
           (companyQueries.length || thematicQueries.length)) {
           if (companyQueries.length) mandatoryQueries.push(companyQueries.shift()!);
-          if (thematicQueries.length && mandatoryQueries.length < 12)
+          if (thematicQueries.length && mandatoryQueries.length < supplementLimit)
             mandatoryQueries.push(thematicQueries.shift()!);
         }
         if (!process.env.TAVILY_API_KEY) {
@@ -993,6 +1014,9 @@ export async function executeRun(
             JSON.stringify({
               mode: state.mode,
               startDate: state.startDate,
+              coveragePolicy: state.mode === "incremental"
+                ? "每日可能没有新事件；零新闻不等于研究失败。只对有新线索但证据不足的目标建议补搜，不以45条展示目标要求当天新增。"
+                : "检查最近30天完整覆盖。",
               requiredCoverage: {
                 directions: topics,
                 keywords: state.settings.keywords,
@@ -1028,7 +1052,7 @@ export async function executeRun(
                   },
                 ],
               },
-              limits: { supplementalQueries: 12, totalEffectiveSources: 100 },
+              limits: { supplementalQueries: supplementLimit, totalEffectiveSources: 100 },
             }),
             signal,
           );
@@ -1042,7 +1066,7 @@ export async function executeRun(
           ].filter((entry, index, all) =>
             all.findIndex((candidate) => candidate.query.trim().toLowerCase() ===
               entry.query.trim().toLowerCase()) === index,
-          ).slice(0, 12);
+          ).slice(0, supplementLimit);
           await log(
             id,
             "覆盖检查",

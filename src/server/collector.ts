@@ -524,7 +524,17 @@ export function buildDiscoveryPlan(
       { searchDepth: "advanced", sourceScope: "trusted", domainMode: "filter", maxResults: 12 },
     ),
   ];
-  for (const direction of topics)
+  if (mode === "incremental") {
+    // Daily discovery needs new facts; expensive depth is reserved for gaps.
+    for (const entry of plan) entry.searchDepth = "basic";
+    for (let index = 0; index < topics.length; index += 3) {
+      const directions = topics.slice(index, index + 3);
+      plan.push(query("常规行业扫描", `方向:${directions.join("、")}`,
+        `(${directions.map((direction) => `"${direction}"`).join(" OR ")}) (发布 OR 研究 OR 产品 OR 政策)`,
+        "general", { searchDepth: "basic", sourceScope: "trusted", maxResults: 12 }));
+    }
+  }
+  for (const direction of mode === "full" ? topics : [])
     plan.push(
       query(
         "常规行业扫描",
@@ -553,6 +563,13 @@ export function buildDiscoveryPlan(
     const companyExpression = companySearchTerms(company)
       .map((term) => `"${term}"`)
       .join(" OR ");
+    if (mode === "incremental") {
+      plan.push(query("重点企业追踪", `企业:${company}`,
+        `(${companyExpression}) (产品 OR 技术 OR 客户 OR 融资 OR 投资 OR 并购 OR 战略 OR 发布)`,
+        "general", { focusCompany: company, priority: 5, searchDepth: "basic",
+          sourceScope: "trusted", domainMode: "filter", maxResults: 12 }));
+      continue;
+    }
     plan.push(
       query(
         "重点企业追踪",
@@ -609,7 +626,10 @@ export function buildDiscoveryPlan(
         { searchDepth: "basic", sourceScope: "trusted", domains: [domain], domainMode: "filter", maxResults: 10 },
       ),
     );
-  const combined = [...plan, ...supplemental].filter(
+  const extras = mode === "incremental"
+    ? supplemental.slice(0, 2).map((entry) => ({ ...entry, searchDepth: "basic" as const }))
+    : supplemental;
+  const combined = [...plan, ...extras].filter(
     (entry) => entry.query.trim().length >= 5,
   );
   return [
@@ -643,7 +663,7 @@ export async function discover(
         ...new Map(
           supplemental.map((entry) => [entry.query.toLowerCase(), entry]),
         ).values(),
-      ].slice(0, 12).map((entry) => ({ ...entry, searchDepth: "advanced" as const }))
+      ].slice(0, mode === "incremental" ? 3 : 12).map((entry) => ({ ...entry, searchDepth: "advanced" as const }))
     : buildDiscoveryPlan(settings, mode, supplemental);
   const results: DiscoveryCandidate[] = [];
   let resultCount = 0;
