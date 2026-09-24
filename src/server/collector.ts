@@ -670,11 +670,13 @@ export async function discover(
   let resultCount = 0;
   const filtering = { invalid: 0, untrusted: 0, domainMismatch: 0, lowScore: 0, companyMismatch: 0, duplicates: 0 };
   let failedQueries = 0;
-  const advancedQueryCount = plan.filter((entry) => entry.searchDepth === "advanced").length;
-  const basicQueryCount = plan.length - advancedQueryCount;
-  for (let index = 0; index < plan.length; index += 4) {
-    signal.throwIfAborted();
-    const group = plan.slice(index, index + 4);
+  let advancedQueryCount = 0;
+  let basicQueryCount = 0;
+  for (let index = 0; index < plan.length; index += 6) {
+    if (signal.aborted) break;
+    const group = plan.slice(index, index + 6);
+    advancedQueryCount += group.filter((entry) => entry.searchDepth === "advanced").length;
+    basicQueryCount += group.filter((entry) => entry.searchDepth !== "advanced").length;
     const settled = await Promise.allSettled(
       group.map(async (entry) => {
         const response = await fetch("https://api.tavily.com/search", {
@@ -739,7 +741,8 @@ export async function discover(
               ? new Date(item.published_date).toISOString()
               : null;
             const score = typeof item.score === "number" ? item.score : undefined;
-            if (score !== undefined && score < 0.2) { filtering.lowScore++; continue; }
+            // Search rank is not factual relevance. Keep trusted candidates for
+            // body/subject/evidence validation instead of discarding on score.
             if (entry.focusCompany) {
               const companyKey = identityText(entry.focusCompany);
               const resultText = identityText(`${title ?? ""} ${snippet ?? ""} ${rawContent ?? ""}`);
@@ -775,7 +778,7 @@ export async function discover(
   return {
     filtering,
     candidates,
-    queryCount: plan.length,
+    queryCount: basicQueryCount + advancedQueryCount,
     resultCount,
     deduplicatedCount: candidates.length,
     failedQueries,

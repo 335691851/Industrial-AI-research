@@ -34,6 +34,7 @@ import {
 } from "./collector";
 import { complete, ModelOutputTruncatedError } from "./model";
 import { checkpointer, safeErrorDetails } from "./checkpoints";
+import { RUN_BUDGET_MS, phaseBudget, phaseSignal } from "./run-budget";
 import { mutateDatabase, readDatabase } from "./store";
 import { decrypt, publicError } from "./security";
 import { identityText, officialWebsite, belongsToWebsite } from "@/lib/identity";
@@ -251,7 +252,7 @@ export function normalizeExtraction(value: unknown): NormalizedExtraction {
   return parsed.success ? { extraction: parsed.data, diagnostic } : { diagnostic };
 }
 
-const EXTRACTION_BATCH_SIZE = 10;
+const EXTRACTION_BATCH_SIZE = 5;
 const ANALYSIS_TEXT_LIMIT = 4_800;
 // Company profile pages are a separate, long-lived research product. They must
 // not consume the rolling-news capacity used to build the intelligence feed.
@@ -312,6 +313,7 @@ const State = Annotation.Root({
   sourceStats: Annotation<SourceStats>(),
   documents: Annotation<Document[]>(),
   extracted: Annotation<Extraction>(),
+  incomplete: Annotation<boolean>(),
   items: Annotation<Item[]>(),
   profiles: Annotation<Profile[]>(),
   insights: Annotation<InsightReport | null>(),
@@ -501,7 +503,7 @@ async function readDiscovered(
   ));
   for (let index = 0; index < candidates.length; index += 6) {
     if (documents.length >= maxEffective) break;
-    signal.throwIfAborted();
+    if (signal.aborted) break;
     const group = candidates.slice(index, index + 6);
     const settled = await Promise.allSettled(
       group.map(async (candidate) => {
@@ -685,7 +687,7 @@ export async function startRun(
     const existing = db.runs.find((r) => r.id === id);
     const publication = existing?.events.findLast((event) => event.node === "融合发布");
     if (existing && publication) {
-      existing.status = "completed";
+      if (existing.status !== "partial") existing.status = "completed";
       existing.finishedAt = publication.at;
       delete existing.error;
       return { id, skipped: true, resume: false };
@@ -727,12 +729,12 @@ export async function executeRun(
 ) {
   let persistence: Awaited<ReturnType<typeof checkpointer>> | undefined;
   const executionStarted = Date.now();
-  const signal = AbortSignal.timeout(255000);
+  const signal = AbortSignal.timeout(RUN_BUDGET_MS);
   try {
     const db = await readDatabase();
     const run = db.runs.find((r) => r.id === id)!;
     // Never replay a published run when its final checkpoint previously failed.
-    if (run.status === "completed") return;
+    if (run.status === "completed" || run.status === "partial") return;
     const settings = {
       ...db.settings,
       selectedProvider: run.provider as Settings["selectedProvider"],
@@ -745,6 +747,7 @@ export async function executeRun(
     const startDate = researchStartDate(db, run);
     const graph = new StateGraph(State)
       .addNode("plan", async () => {
+        const planningSignal = phaseSignal(signal, executionStarted, 12000);
         const modeInstruction =
           run.mode === "full"
             ? "对最近 30 天进行完整重研，覆盖所有研究方向、关键词、企业和指定网站。"
@@ -782,7 +785,8 @@ export async function executeRun(
               },
               limits: { extraQueries: run.mode === "incremental" ? 2 : 6 },
             }),
-            signal,
+            planningSignal,
+            { maxTokens: 1600 },
           );
           planned = agentQueries(value, "自主规划补充");
           if (run.mode === "incremental") planned.queries = planned.queries.slice(0, 2);
@@ -809,6 +813,10 @@ export async function executeRun(
         };
       })
       .addNode("collect", async (state) => {
+        const collectionSignal = phaseSignal(signal, executionStarted, 110000);
+        const rootSignal = signal;
+        // Website collection and discovery are independent; neither waits for the other.
+        const signalForCollection = collectionSignal;
         const docs: Document[] = [];
         const stats = emptyStats();
         const profileTargets = state.settings.companies.filter((name) => {
@@ -825,7 +833,10 @@ export async function executeRun(
           const dailyPlan = buildDiscoveryPlan(state.settings, state.mode, state.planQueries);
           await log(id, "增量预算", `首轮 ${dailyPlan.length} 个 Basic 查询，预算 ${dailyPlan.length} search credits；Advanced 补搜最多 3 问 / 6 credits。官网画像复用 ${state.settings.companies.length - profileTargets.length} 家、刷新 ${profileTargets.length} 家（7 天周期）；Extract 单独计费，恢复节点可能重发请求。`);
         }
+        const directCollection = (async () => {
+        const signal = signalForCollection;
         for (let index = 0; index < profileTargets.length; index += 4) {
+          if (signal.aborted) break;
           const names = profileTargets.slice(index, index + 4);
           await Promise.all(names.map(async (name) => {
             const website = officialWebsite(name, state.settings.companyWebsites);
@@ -854,7 +865,7 @@ export async function executeRun(
         if (unverifiedConfigured.length) await log(id, "来源准入",
           `${unverifiedConfigured.length} 个用户指定入口不在系统可信域名分级中，仍按配置定向采集，但不能单独作为发布证据，必须取得官网、政府/监管、权威媒体或独立交叉印证：${unverifiedConfigured.map((s) => s.name).join("、")}。`, "warning");
         for (let index = 0; index < enabled.length; index += 4) {
-          signal.throwIfAborted();
+          if (signal.aborted) break;
           const group = enabled.slice(index, index + 4);
           const results = await Promise.allSettled(
             group.map((s) =>
@@ -885,6 +896,9 @@ export async function executeRun(
             }
           }
         }
+        })();
+        // Attach immediately so errors cannot become unhandled while discovery runs.
+        const directSettled = directCollection.catch((error) => ({ error }));
         if (process.env.TAVILY_API_KEY) {
           try {
             const discovery = await dependencies.discover(
@@ -892,11 +906,11 @@ export async function executeRun(
               state.mode,
               state.planQueries,
               state.startDate,
-              signal,
+              collectionSignal,
             );
             const fetched = await readDiscovered(
               discovery,
-              signal,
+              collectionSignal,
               state.startDate,
               Math.max(0, INITIAL_EVENT_SOURCE_LIMIT -
                 docs.filter((document) => !document.profileCompany).length),
@@ -926,7 +940,12 @@ export async function executeRun(
             "开放网络检索",
             "未配置搜索服务：仍会直接采集指定网站，但常规行业扫描、关键词扩展与企业外部追踪不会执行。",
           );
+        const directResult = await directSettled;
+        if (directResult) throw directResult.error;
+        rootSignal.throwIfAborted();
+        if (collectionSignal.aborted) await log(id, "阶段预算", "首轮采集窗口结束，保留已取得材料并为分析、校验和发布预留时间。", "warning");
         const { unique, selected } = selectFair(docs, INITIAL_EVENT_SOURCE_LIMIT);
+        selected.sort((a, b) => Number(Boolean(a.profileCompany)) - Number(Boolean(b.profileCompany)));
         stats.effective = unique.length;
         stats.analyzed = selected.length;
         const uniqueEvents = unique.filter((document) => !document.profileCompany).length;
@@ -957,6 +976,10 @@ export async function executeRun(
         return { documents: selected, sourceStats: stats };
       })
       .addNode("coverage", async (state) => {
+        if (phaseBudget(executionStarted, 120000) < 8000) {
+          await log(id, "阶段预算", "不再追加覆盖审查与补搜，优先分析已采集材料。", "warning");
+          return { supplementalQueries: [] };
+        }
         const supplementLimit = state.mode === "incremental" ? 3 : 12;
         const deterministicPlan = buildDiscoveryPlan(state.settings, state.mode);
         const missingCompanies = state.settings.companies.filter(
@@ -1071,7 +1094,8 @@ export async function executeRun(
               },
               limits: { supplementalQueries: supplementLimit, totalEffectiveSources: 100 },
             }),
-            signal,
+            phaseSignal(signal, executionStarted, 120000),
+            { maxTokens: 1600 },
           );
           const parsed = coverageSchema.safeParse(value);
           if (!parsed.success) throw new Error("覆盖审查未返回有效结构。");
@@ -1106,6 +1130,8 @@ export async function executeRun(
         }
       })
       .addNode("supplement", async (state) => {
+        const supplementSignal = phaseSignal(signal, executionStarted, 130000);
+        if (phaseBudget(executionStarted, 130000) < 8000) return {};
         const currentEventCount = state.documents.filter((document) =>
           !document.profileCompany).length;
         if (!state.supplementalQueries.length || currentEventCount >= TOTAL_EVENT_SOURCE_LIMIT)
@@ -1116,12 +1142,12 @@ export async function executeRun(
             state.mode,
             state.supplementalQueries,
             state.startDate,
-            signal,
+            supplementSignal,
             true,
           );
           const fetched = await readDiscovered(
             discovery,
-            signal,
+            supplementSignal,
             state.startDate,
             TOTAL_EVENT_SOURCE_LIMIT - currentEventCount,
             new Set(state.documents.map((document) => document.url)),
@@ -1132,6 +1158,7 @@ export async function executeRun(
             [...state.documents, ...fetched.documents],
             TOTAL_EVENT_SOURCE_LIMIT,
           );
+          selected.sort((a, b) => Number(Boolean(a.profileCompany)) - Number(Boolean(b.profileCompany)));
           const sourceStats: SourceStats = {
             queryCount: state.sourceStats.queryCount + discovery.queryCount,
             searchResults:
@@ -1166,6 +1193,9 @@ export async function executeRun(
         }
       })
       .addNode("extract", async (state) => {
+        const extractionSignal = phaseSignal(signal, executionStarted, 222000);
+        let analyzed = 0;
+        let incomplete = false;
         // This compact reference set is repeated per model batch. Keep enough
         // stable identifiers for duplicate detection without spending tokens on
         // the whole historical corpus for every request.
@@ -1182,10 +1212,11 @@ export async function executeRun(
           { length: Math.ceil(state.documents.length / EXTRACTION_BATCH_SIZE) },
           (_, batchIndex) => ({ batchIndex, start: batchIndex * EXTRACTION_BATCH_SIZE }),
         );
-        for (let index = 0; index < batches.length; index += 2) {
+        for (let index = 0; index < batches.length; index += 3) {
           signal.throwIfAborted();
-          const group = batches.slice(index, index + 2);
-          const results = await Promise.all(
+          if (phaseBudget(executionStarted, 222000) < 10000) { incomplete = true; break; }
+          const group = batches.slice(index, index + 3);
+          const results = await Promise.allSettled(
             group.map(async ({ batchIndex, start }) => {
               const batch = state.documents
                 .slice(start, start + EXTRACTION_BATCH_SIZE)
@@ -1259,7 +1290,7 @@ export async function executeRun(
                       (attempt
                         ? `\n上次返回无法发布（${lastDiagnostic}）。请仅修正 JSON 结构；严格使用模板字段、枚举值及原文引用，输出合法 JSON。`
                         : ""),
-                    signal,
+                    extractionSignal,
                     { maxTokens: extractionTokenBudget(documents.length, targetNames.length) },
                   );
                   const normalized = normalizeExtraction(value);
@@ -1293,7 +1324,7 @@ export async function executeRun(
                     `异步批次 ${batchIndex + 1}/${batches.length} 输出达到长度上限，自动拆分 ${documents.length} 份材料为 ${middle} + ${documents.length - middle} 份精简重试。`,
                     "warning",
                   );
-                  // Keep the existing two top-level concurrent batches bounded when
+                  // Keep the three top-level concurrent batches bounded when
                   // a provider asks for fallback work, avoiding a retry burst.
                   const first = await extractAdaptively(documents.slice(0, middle));
                   const second = await extractAdaptively(documents.slice(middle));
@@ -1306,7 +1337,7 @@ export async function executeRun(
               const result = await extractAdaptively(batch);
               const missing = targets.filter((name) => !result.profiles.some((profile) =>
                 identityText(profile.name) === identityText(name) && profile.narrative.trim() && profile.positioning.trim() && profile.solutions.length && profile.capabilities.length));
-              if (missing.length) {
+              if (missing.length && phaseBudget(executionStarted, 222000) > 30000) {
                 try {
                   const repairPrompt = JSON.stringify({
                     task: `专项补充企业官网画像：${missing.join("、")}。`,
@@ -1324,7 +1355,7 @@ export async function executeRun(
                     key,
                     system,
                     repairPrompt,
-                    signal,
+                    extractionSignal,
                     { maxTokens: extractionTokenBudget(0, missing.length) },
                   ));
                   if (repaired.extraction) result.profiles.push(...repaired.extraction.profiles);
@@ -1337,15 +1368,23 @@ export async function executeRun(
                 "结构化分析",
                 `异步批次 ${batchIndex + 1}/${batches.length}：${batch.length} 份材料，提取 ${result.items.length} 条事件、${result.profiles.length} 份企业画像${splitCount ? `；已自动缩分 ${splitCount} 次。` : "。"}`,
               );
+              analyzed += batch.length;
               return result;
             }),
           );
           for (const result of results) {
-            extracted.items.push(...result.items);
-            extracted.profiles.push(...result.profiles);
+            if (result.status === "fulfilled") {
+              extracted.items.push(...result.value.items);
+              extracted.profiles.push(...result.value.profiles);
+            } else {
+              incomplete = true;
+              await log(id, "批次保留", `本批未完成，其他成功批次继续校验：${publicError(result.reason)}`, "warning");
+            }
           }
         }
-        return { extracted };
+        if (!analyzed) throw new Error("本轮模型批次均未完成，保留采集检查点和历史内容，可恢复分析。");
+        if (incomplete) await log(id, "分析进度", `已完成 ${analyzed}/${state.documents.length} 份材料分析，未完成部分不作为已研究内容；优先发布已核验成果。`, "warning");
+        return { extracted, incomplete, sourceStats: { ...state.sourceStats, analyzed } };
       })
       .addNode("verify", async (state) => {
         const grounded = groundExtraction(state.extracted, state.documents, id);
@@ -1473,7 +1512,7 @@ export async function executeRun(
           // atomic snapshot; extraction-stage counts remain in the audit trail.
           active.itemCount = current.items.length;
           active.sourceStats = state.sourceStats;
-          active.status = "completed";
+          active.status = state.incomplete ? "partial" : "completed";
           active.finishedAt = now.toISOString();
           delete active.error;
           const belowPortfolioTarget = current.items.length < 45;
@@ -1527,7 +1566,7 @@ export async function executeRun(
     await mutateDatabase((db) => {
       const run = db.runs.find((r) => r.id === id);
       if (run) {
-        if (run.status === "completed") {
+        if (run.status === "completed" || run.status === "partial") {
           run.events.push({ at: new Date().toISOString(), node: "发布后检查点", message: `内容已发布，运行保留完成状态；${message}`, status: "warning" });
           return;
         }

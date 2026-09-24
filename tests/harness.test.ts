@@ -10,6 +10,38 @@ import { ModelOutputTruncatedError } from "../src/server/model";
 import { synthesisInstruction } from "../src/server/synthesis";
 import { checkpointer } from "../src/server/checkpoints";
 
+test("one failed extraction batch retains verified output with honest partial status", async () => {
+  const original = process.cwd();
+  const temp = await mkdtemp(path.join(os.tmpdir(), "research-partial-"));
+  process.chdir(temp);
+  const quote = "测试企业正式发布工业视觉质检平台并披露制造现场部署能力";
+  try {
+    const key = await encrypt("test-key");
+    await mutateDatabase(db => {
+      db.credentials.deepseek = key;
+      db.settings.companies = [];
+      db.settings.companyWebsites = { 测试企业: "https://example.com" };
+      db.settings.sources = [{ id: "fixture", name: "fixture", url: "https://example.com", kind: "website", enabled: true }];
+    });
+    const run = await startRun("full");
+    await executeRun(run.id, false, {
+      collectSource: async () => Array.from({ length: 6 }, (_, n) => ({ url: `https://example.com/${n}`, title: `工业产品${n}`, text: quote.repeat(10) + n, source: "fixture", publishedAt: new Date().toISOString() })),
+      discover: async () => ({ candidates: [], queryCount: 0, resultCount: 0, deduplicatedCount: 0, failedQueries: 0, basicQueryCount: 0, advancedQueryCount: 0, estimatedCredits: 0 }),
+      complete: async (_provider, _model, _key, _system, prompt) => {
+        const input = JSON.parse(prompt);
+        if (!input.documents) return { strategy: "fixture", queries: [] };
+        if (input.documents[0].document >= 5) throw new Error("单批服务不可用");
+        return { items: [{ title: "测试企业发布工业视觉质检平台", summary: quote, implication: "分析判断：关注工业部署能力。", category: "产品发布", topic: "工业智能", importance: "high", company: "测试企业", eventKey: "fixture-vision", confidence: .95, evidence: [{ document: input.documents[0].document, quote }] }], profiles: [] };
+      },
+    });
+    const state = await readDatabase();
+    assert.equal(state.runs[0].status, "partial");
+    assert.equal(state.runs[0].sourceStats?.analyzed, 5);
+    assert.equal(state.items.length, 1);
+    assert.ok(state.runs[0].events.some(event => event.node === "分析进度"));
+  } finally { process.chdir(original); }
+});
+
 test("real LangGraph pipeline checkpoints, resumes after model failure and publishes once", async () => {
   // Test subprocess has its own cwd; no user workspace data or live provider calls.
   const original = process.cwd();

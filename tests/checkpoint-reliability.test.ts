@@ -55,8 +55,8 @@ test("search filtering reconciles every rejection and uses body for company iden
       lane: "重点企业追踪", coverageKey: "西门子", query: "西门子产品", topic: "general", focusCompany: "西门子",
     }], "2026-09-21", new AbortController().signal, true);
     assert.equal(result.resultCount, 6);
-    assert.equal(result.deduplicatedCount, 1);
-    assert.deepEqual(result.filtering, { invalid: 1, untrusted: 1, domainMismatch: 0, lowScore: 1, companyMismatch: 1, duplicates: 1 });
+    assert.equal(result.deduplicatedCount, 2, "trusted low-score results still receive content validation");
+    assert.deepEqual(result.filtering, { invalid: 1, untrusted: 1, domainMismatch: 0, lowScore: 0, companyMismatch: 1, duplicates: 1 });
   } finally {
     globalThis.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.TAVILY_API_KEY;
