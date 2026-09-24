@@ -4,6 +4,34 @@ import { mkdir, readFile, writeFile, rename } from "node:fs/promises";
 import { serialize, deserialize } from "node:v8";
 import path from "node:path";
 
+// Do not log provider messages, SQL parameters, connection strings or credentials.
+export function safeErrorDetails(error: unknown) {
+  const codes: string[] = [];
+  let current = error;
+  for (let depth = 0; current && typeof current === "object" && depth < 5; depth++) {
+    const detail = current as { code?: unknown; cause?: unknown };
+    if (typeof detail.code === "string" && /^[A-Z0-9_]{2,40}$/i.test(detail.code)) codes.push(detail.code);
+    current = detail.cause;
+  }
+  return { codes };
+}
+
+export async function checkpointOperation<T>(operation: string, task: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    signal?.throwIfAborted();
+    try { return await task(); }
+    catch (error) {
+      const detail = safeErrorDetails(error);
+      const transient = detail.codes.some((code) => ["ECONNRESET", "ETIMEDOUT", "EPIPE", "EAI_AGAIN", "08000", "08003", "08006", "40001", "40P01", "57P01", "53300"].includes(code));
+      console.error("LangGraph checkpoint operation failed", { operation, attempt: attempt + 1, ...detail });
+      if (!transient || attempt >= 2) {
+        throw new Error(`研究检查点${operation}失败${detail.codes.length ? `（${detail.codes.join("、")}）` : ""}，已停止后续流程；请检查服务日志后恢复。`, { cause: error });
+      }
+      await new Promise((resolve) => setTimeout(resolve, 200 * (attempt + 1)));
+    }
+  }
+}
+
 // Per-run local durable saver; v8 preserves Uint8Array checkpoint serialization.
 class FileSaver extends MemorySaver {
   private queue: Promise<void> = Promise.resolve();
@@ -130,7 +158,7 @@ export function checkpointConnection(value: string) {
   }
 }
 
-export async function checkpointer(runId: string) {
+export async function checkpointer(runId: string, signal?: AbortSignal) {
   if (process.env.DATABASE_URL) {
     const connection = checkpointConnection(process.env.DATABASE_URL);
     const saver = PostgresSaver.fromConnString(connection.connectionString, {
@@ -147,6 +175,10 @@ export async function checkpointer(runId: string) {
       await saver.end();
       throw new Error(diagnostic);
     }
+    const put = saver.put.bind(saver);
+    const putWrites = saver.putWrites.bind(saver);
+    saver.put = (...args) => checkpointOperation("保存", () => put(...args), signal);
+    saver.putWrites = (...args) => checkpointOperation("节点写入", () => putWrites(...args), signal);
     return { saver, close: () => saver.end() };
   }
   if (process.env.VERCEL || process.env.SUPABASE_URL)

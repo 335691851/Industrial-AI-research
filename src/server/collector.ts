@@ -415,6 +415,7 @@ export function documentFromDiscoveryCandidate(
   };
 }
 export type DiscoveryResult = {
+  filtering?: { invalid: number; untrusted: number; domainMismatch: number; lowScore: number; companyMismatch: number; duplicates: number };
   candidates: DiscoveryCandidate[];
   queryCount: number;
   resultCount: number;
@@ -667,6 +668,7 @@ export async function discover(
     : buildDiscoveryPlan(settings, mode, supplemental);
   const results: DiscoveryCandidate[] = [];
   let resultCount = 0;
+  const filtering = { invalid: 0, untrusted: 0, domainMismatch: 0, lowScore: 0, companyMismatch: 0, duplicates: 0 };
   let failedQueries = 0;
   const advancedQueryCount = plan.filter((entry) => entry.searchDepth === "advanced").length;
   const basicQueryCount = plan.length - advancedQueryCount;
@@ -717,16 +719,16 @@ export async function discover(
         const candidates: DiscoveryCandidate[] = [];
         for (const item of body.results ?? []) {
           resultCount++;
-          if (typeof item.url !== "string") continue;
+          if (typeof item.url !== "string") { filtering.invalid++; continue; }
           try {
             const url = canonicalUrl(item.url);
             const trusted = entry.sourceScope === "primary"
               ? isOfficialSource(url, settings.companyWebsites)
               : isTrustedSource(url, settings.companyWebsites);
-            if (!trusted) continue;
+            if (!trusted) { filtering.untrusted++; continue; }
             if (entry.domainMode === "filter" && entry.domains?.length &&
                 !entry.domains.some((domain) => belongsToWebsite(url, `https://${domain}`)))
-              continue;
+              { filtering.domainMismatch++; continue; }
             const title = typeof item.title === "string" ? item.title.trim() : undefined;
             const snippet = typeof item.content === "string" ? item.content.trim() : undefined;
             const rawContent = typeof item.raw_content === "string"
@@ -737,16 +739,17 @@ export async function discover(
               ? new Date(item.published_date).toISOString()
               : null;
             const score = typeof item.score === "number" ? item.score : undefined;
-            if (score !== undefined && score < 0.2) continue;
+            if (score !== undefined && score < 0.2) { filtering.lowScore++; continue; }
             if (entry.focusCompany) {
               const companyKey = identityText(entry.focusCompany);
-              const resultText = identityText(`${title ?? ""} ${snippet ?? ""}`);
+              const resultText = identityText(`${title ?? ""} ${snippet ?? ""} ${rawContent ?? ""}`);
               const website = officialWebsite(entry.focusCompany, settings.companyWebsites);
               if (!resultText.includes(companyKey) && !(website && belongsToWebsite(url, website)))
-                continue;
+                { filtering.companyMismatch++; continue; }
             }
             candidates.push({ ...entry, url, title, snippet, rawContent, publishedAt, score });
           } catch {
+            filtering.invalid++;
             /* Validate all search results before any server-side fetch. */
           }
         }
@@ -768,7 +771,9 @@ export async function discover(
       byUrl.set(result.url, result);
   }
   const candidates = [...byUrl.values()];
+  filtering.duplicates = results.length - candidates.length;
   return {
+    filtering,
     candidates,
     queryCount: plan.length,
     resultCount,

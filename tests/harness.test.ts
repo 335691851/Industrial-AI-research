@@ -8,6 +8,7 @@ import { encrypt, decrypt } from "../src/server/security";
 import { startRun, executeRun } from "../src/server/research";
 import { ModelOutputTruncatedError } from "../src/server/model";
 import { synthesisInstruction } from "../src/server/synthesis";
+import { checkpointer } from "../src/server/checkpoints";
 
 test("real LangGraph pipeline checkpoints, resumes after model failure and publishes once", async () => {
   // Test subprocess has its own cwd; no user workspace data or live provider calls.
@@ -87,6 +88,14 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
         ],
         profiles: [],
       }),
+    }, async (id, signal) => {
+      const persistence = await checkpointer(id, signal);
+      const put = persistence.saver.put.bind(persistence.saver);
+      persistence.saver.put = async (...args: Parameters<typeof put>) => {
+        if (args[2].step === 8) throw new Error("simulated final checkpoint failure");
+        return put(args[0], args[1], args[2], args[3] ?? {});
+      };
+      return persistence;
     });
     const state = await readDatabase();
     assert.equal(calls, collectedCalls, "completed collection must not rerun after restore");
@@ -97,6 +106,10 @@ test("real LangGraph pipeline checkpoints, resumes after model failure and publi
       "successful publication is complete even when non-fatal warnings are logged",
     );
     assert.ok(state.runs[0].events.some((e) => e.node === "融合发布"));
+    assert.ok(state.runs[0].events.some((e) => e.node === "发布后检查点"));
+    await executeRun(created.id, true, deps);
+    assert.equal(calls, collectedCalls, "already published runs must not replay research");
+    assert.equal((await readDatabase()).runs[0].events.filter((e) => e.node === "融合发布").length, 1);
     const safe = JSON.stringify(await dashboard());
     assert.equal(safe.includes("test-not-a-real-api-key"), false);
     assert.equal(safe.includes(encrypted), false);

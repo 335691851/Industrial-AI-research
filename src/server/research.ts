@@ -33,10 +33,16 @@ import {
   readSourcePage,
 } from "./collector";
 import { complete, ModelOutputTruncatedError } from "./model";
-import { checkpointer } from "./checkpoints";
+import { checkpointer, safeErrorDetails } from "./checkpoints";
 import { mutateDatabase, readDatabase } from "./store";
 import { decrypt, publicError } from "./security";
 import { identityText, officialWebsite, belongsToWebsite } from "@/lib/identity";
+
+export function discoveryFilterSummary(result: DiscoveryResult) {
+  const f = result.filtering;
+  if (!f) return "搜索服务未返回分项筛选统计。";
+  return `返回 ${result.resultCount} 条：无效 URL ${f.invalid}、非可信来源 ${f.untrusted}、指定域名不符 ${f.domainMismatch}、低相关度 ${f.lowScore}、企业不匹配 ${f.companyMismatch}、重复 URL ${f.duplicates}；保留 ${result.deduplicatedCount} 条候选。`;
+}
 
 const citationSchema = z.object({
   document: z.number().int().nonnegative(),
@@ -677,6 +683,13 @@ export async function startRun(
         run.error = "上次执行中断或超时，可从检查点恢复。";
       }
     const existing = db.runs.find((r) => r.id === id);
+    const publication = existing?.events.findLast((event) => event.node === "融合发布");
+    if (existing && publication) {
+      existing.status = "completed";
+      existing.finishedAt = publication.at;
+      delete existing.error;
+      return { id, skipped: true, resume: false };
+    }
     if (existing && daily && ["completed", "partial"].includes(existing.status))
       return { id, skipped: true, resume: false };
     if (db.runs.some((r) => r.status === "running"))
@@ -710,6 +723,7 @@ export async function executeRun(
   id: string,
   resume: boolean,
   dependencies = { collectSource, complete, discover },
+  createCheckpointer = checkpointer,
 ) {
   let persistence: Awaited<ReturnType<typeof checkpointer>> | undefined;
   const executionStarted = Date.now();
@@ -717,6 +731,8 @@ export async function executeRun(
   try {
     const db = await readDatabase();
     const run = db.runs.find((r) => r.id === id)!;
+    // Never replay a published run when its final checkpoint previously failed.
+    if (run.status === "completed") return;
     const settings = {
       ...db.settings,
       selectedProvider: run.provider as Settings["selectedProvider"],
@@ -725,7 +741,7 @@ export async function executeRun(
     const cipher = db.credentials[settings.selectedProvider];
     if (!cipher) throw new Error("所选服务商密钥已移除，请重新配置。");
     const key = await decrypt(cipher);
-    persistence = await checkpointer(id);
+    persistence = await createCheckpointer(id, signal);
     const startDate = researchStartDate(db, run);
     const graph = new StateGraph(State)
       .addNode("plan", async () => {
@@ -891,6 +907,7 @@ export async function executeRun(
             stats.queryCount += discovery.queryCount;
             stats.searchResults += discovery.resultCount;
             stats.deduplicated += discovery.deduplicatedCount;
+            if (discovery.filtering) await log(id, "搜索筛选明细", discoveryFilterSummary(discovery));
             stats.read += fetched.read;
             stats.effective += fetched.documents.length;
             stats.failed += fetched.failed;
@@ -1110,6 +1127,7 @@ export async function executeRun(
             new Set(state.documents.map((document) => document.url)),
             state.settings.companyWebsites,
           );
+          if (discovery.filtering) await log(id, "补搜筛选明细", discoveryFilterSummary(discovery));
           const { selected } = selectFair(
             [...state.documents, ...fetched.documents],
             TOTAL_EVENT_SOURCE_LIMIT,
@@ -1360,7 +1378,8 @@ export async function executeRun(
         const items = mergeItems([], quality.accepted);
         const profiles = mergeProfiles([], grounded.profiles);
         await log(id, "事件融合", `质量门通过 ${quality.accepted.length} 条，跨批次去重合并 ${quality.accepted.length - items.length} 条，唯一事件 ${items.length} 条；官网画像 ${profiles.length} 家。`);
-        const missing = settings.companies.filter((name) => !profiles.some((p) => identityText(p.name) === identityText(name)));
+        const retainedProfiles = mergeProfiles(db.profiles, profiles);
+        const missing = settings.companies.filter((name) => !retainedProfiles.some((p) => identityText(p.name) === identityText(name) && p.evidence.length > 0));
         if (missing.length) await log(id, "企业画像覆盖", `本轮未完成官网画像：${missing.join("、")}；保留历史画像，请检查官网可访问性和材料完整性。`, "warning");
         return { items, profiles };
       })
@@ -1454,6 +1473,9 @@ export async function executeRun(
           // atomic snapshot; extraction-stage counts remain in the audit trail.
           active.itemCount = current.items.length;
           active.sourceStats = state.sourceStats;
+          active.status = "completed";
+          active.finishedAt = now.toISOString();
+          delete active.error;
           const belowPortfolioTarget = current.items.length < 45;
           const companyDistribution = [...current.items.reduce((counts, item) => {
             const name = item.company || "行业";
@@ -1489,6 +1511,7 @@ export async function executeRun(
       configurable: { thread_id: id },
       signal,
       recursionLimit: 16,
+      durability: "sync" as const,
     };
     const hasCheckpoint =
       resume && Boolean(await persistence.saver.getTuple(config));
@@ -1496,21 +1519,18 @@ export async function executeRun(
       hasCheckpoint ? null : { settings, mode: run.mode },
       config,
     );
-    await mutateDatabase((current) => {
-      const active = current.runs.find((r) => r.id === id)!;
-      // Reaching publish means the research and fusion transaction completed.
-      // Non-fatal source/evidence warnings remain visible in the audit log but
-      // must not incorrectly label an otherwise completed run as partial.
-      active.status = "completed";
-      active.finishedAt = new Date().toISOString();
-    });
   } catch (error) {
+    console.error("Research execution failed", { runId: id, ...safeErrorDetails(error) });
     const message = signal.aborted
       ? "研究达到单次执行时间预算，已保留检查点，可恢复任务。"
       : publicError(error);
     await mutateDatabase((db) => {
       const run = db.runs.find((r) => r.id === id);
       if (run) {
+        if (run.status === "completed") {
+          run.events.push({ at: new Date().toISOString(), node: "发布后检查点", message: `内容已发布，运行保留完成状态；${message}`, status: "warning" });
+          return;
+        }
         run.status = "failed";
         run.error = message;
         run.finishedAt = new Date().toISOString();
@@ -1523,6 +1543,7 @@ export async function executeRun(
       }
     });
   } finally {
-    await persistence?.close();
+    try { await persistence?.close(); }
+    catch (error) { console.error("Research checkpoint close failed", { runId: id, ...safeErrorDetails(error) }); }
   }
 }
